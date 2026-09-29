@@ -1,0 +1,5 @@
+/build/
+/out/
+*.w3shadow.tmp*
+*.w3shadow.bak*
+
