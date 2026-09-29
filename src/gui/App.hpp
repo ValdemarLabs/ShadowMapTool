@@ -41,6 +41,8 @@ private:
         ExportShd,
         ExportPng,
         BuildMap,
+        Help,
+        HelpClose,
         Count
     };
 
@@ -57,6 +59,8 @@ private:
         D2D1_RECT_F exportShd{};
         D2D1_RECT_F exportPng{};
         D2D1_RECT_F buildMap{};
+        D2D1_RECT_F help{};
+        D2D1_RECT_F helpClose{};
         D2D1_RECT_F status{};
     };
 
@@ -127,12 +131,14 @@ private:
     Microsoft::WRL::ComPtr<IDWriteTextFormat> bodyFormat_;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> smallFormat_;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> buttonFormat_;
+    Microsoft::WRL::ComPtr<IDWriteTextFormat> helpBodyFormat_;
 
     std::optional<std::filesystem::path> mapPath_;
     std::optional<W3EInfo> mapInfo_;
     std::optional<ShadowMap> shadowMap_;
     Pattern pattern_ = Pattern::Quadrants;
     OutputMode outputMode_ = OutputMode::Copy;
+    bool showHelp_ = false;
     std::wstring status_ = L"Choose a Warcraft III map to begin.";
     StatusKind statusKind_ = StatusKind::Neutral;
 };

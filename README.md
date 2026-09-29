@@ -56,9 +56,17 @@ The default workflow is:
 2. Select one of the six validation patterns.
 3. Confirm the live SHD preview and dimensions.
 4. Keep **Save as copy** selected.
-5. Choose **Build test map** and select an output path.
+5. Choose **Build pattern test** and select an output path.
 
 The GUI also exports standalone SHD and PNG files. In-place replacement is a separate mode, requires confirmation, and retains a numbered `.w3shadow.bak` copy. Keyboard users can move between controls with `Tab`, activate them with `Enter` or `Space`, open a map with `Ctrl+O`, and build with `Ctrl+S`.
+
+Open the in-app Help section with **? Help** or `F1`; close it with `Esc`.
+
+### Full shadow generation status
+
+Version 0.2 cannot yet calculate a complete gameplay shadowmap from terrain and placed objects. It does not currently reconstruct cliffs, resolve doodad/destructible models, load MDX/CASC geometry, or ray-trace the scene. **Build pattern test** inserts the selected artificial pattern for SHD compatibility testing; it is not a full calculated shadowmap.
+
+The pattern tests must first establish current-client byte semantics, X/Y orientation, row order, and border behavior. Full calculation is the next phase after those results are confirmed in Warcraft III.
 
 ## Command-line interface
 

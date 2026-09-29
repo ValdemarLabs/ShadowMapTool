@@ -194,7 +194,9 @@ int App::run(
     if (!initializeFactories() || !createWindow(instance, smokeTest ? SW_HIDE : showCommand)) return 1;
     if (startupMap) loadMap(*startupMap);
     if (smokeTest) {
+        showHelp_ = true;
         if (!createDeviceResources()) return 2;
+        paint();
         SetTimer(window_, 1U, 100U, nullptr);
     }
 
@@ -348,6 +350,18 @@ LRESULT App::handleMessage(const UINT message, const WPARAM wParam, const LPARAM
         return 0;
     }
     case WM_KEYDOWN:
+        if (wParam == VK_ESCAPE && showHelp_) {
+            showHelp_ = false;
+            focused_ = Target::Help;
+            InvalidateRect(window_, nullptr, FALSE);
+            return 0;
+        }
+        if (wParam == VK_F1) {
+            showHelp_ = true;
+            focused_ = Target::HelpClose;
+            InvalidateRect(window_, nullptr, FALSE);
+            return 0;
+        }
         if (wParam == VK_TAB) {
             moveFocus((GetKeyState(VK_SHIFT) & 0x8000) != 0);
             return 0;
@@ -448,12 +462,14 @@ bool App::createDeviceResources()
         FAILED(makeFormat(16.0F, DWRITE_FONT_WEIGHT_SEMI_BOLD, headingFormat_)) ||
         FAILED(makeFormat(14.0F, DWRITE_FONT_WEIGHT_NORMAL, bodyFormat_)) ||
         FAILED(makeFormat(12.0F, DWRITE_FONT_WEIGHT_NORMAL, smallFormat_)) ||
-        FAILED(makeFormat(13.0F, DWRITE_FONT_WEIGHT_SEMI_BOLD, buttonFormat_))) {
+        FAILED(makeFormat(13.0F, DWRITE_FONT_WEIGHT_SEMI_BOLD, buttonFormat_)) ||
+        FAILED(makeFormat(14.0F, DWRITE_FONT_WEIGHT_NORMAL, helpBodyFormat_))) {
         discardDeviceResources();
         return false;
     }
     buttonFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
     buttonFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    helpBodyFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
     for (auto* format : {bodyFormat_.Get(), smallFormat_.Get()}) {
         format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     }
@@ -480,6 +496,7 @@ void App::discardDeviceResources()
     bodyFormat_.Reset();
     smallFormat_.Reset();
     buttonFormat_.Reset();
+    helpBodyFormat_.Reset();
     renderTarget_.Reset();
 }
 
@@ -546,6 +563,13 @@ App::Layout App::calculateLayout() const
                                    layout.exportShd.right + 118.0F, actionsTop + 40.0F);
     layout.buildMap = D2D1::RectF(layout.previewCard.right - 190.0F, actionsTop,
                                   layout.previewCard.right - 18.0F, actionsTop + 40.0F);
+    layout.help = D2D1::RectF(size.width - 274.0F, 29.0F, size.width - 184.0F, 61.0F);
+    const float helpWidth = std::min(760.0F, size.width - 80.0F);
+    const float helpHeight = std::min(570.0F, size.height - 80.0F);
+    const float helpLeft = (size.width - helpWidth) / 2.0F;
+    const float helpTop = (size.height - helpHeight) / 2.0F;
+    layout.helpClose = D2D1::RectF(helpLeft + helpWidth - 120.0F, helpTop + helpHeight - 58.0F,
+                                   helpLeft + helpWidth - 24.0F, helpTop + helpHeight - 20.0F);
     layout.status = D2D1::RectF(margin, size.height - 47.0F, size.width - margin, size.height - 16.0F);
     return layout;
 }
@@ -553,6 +577,8 @@ App::Layout App::calculateLayout() const
 App::Target App::hitTest(const float x, const float y) const
 {
     const auto layout = calculateLayout();
+    if (showHelp_) return contains(layout.helpClose, x, y) ? Target::HelpClose : Target::None;
+    if (contains(layout.help, x, y)) return Target::Help;
     if (contains(layout.browse, x, y)) return Target::Browse;
     for (std::size_t index = 0; index < layout.patterns.size(); ++index) {
         if (contains(layout.patterns[index], x, y)) {
@@ -576,8 +602,13 @@ D2D1_POINT_2F App::mousePoint(const LPARAM lParam) const
 
 void App::moveFocus(const bool backwards)
 {
+    if (showHelp_) {
+        focused_ = Target::HelpClose;
+        InvalidateRect(window_, nullptr, FALSE);
+        return;
+    }
     constexpr int first = static_cast<int>(Target::Browse);
-    constexpr int count = static_cast<int>(Target::Count);
+    constexpr int count = static_cast<int>(Target::Help) + 1;
     int value = static_cast<int>(focused_);
     if (value < first || value >= count) value = first;
     value = backwards ? (value - 1 + count) % count : (value + 1) % count;
@@ -606,6 +637,14 @@ void App::activate(const Target target)
     case Target::ExportShd: exportShadow(); break;
     case Target::ExportPng: exportPng(); break;
     case Target::BuildMap: buildTestMap(); break;
+    case Target::Help:
+        showHelp_ = true;
+        focused_ = Target::HelpClose;
+        break;
+    case Target::HelpClose:
+        showHelp_ = false;
+        focused_ = Target::Help;
+        break;
     case Target::None:
     case Target::Count:
         break;
@@ -736,7 +775,7 @@ void App::exportPng()
 void App::buildTestMap()
 {
     if (!mapPath_ || !mapInfo_ || !shadowMap_) {
-        setStatus(L"Choose a map before building a shadow test map.", StatusKind::Warning);
+        setStatus(L"Choose a map before building a pattern validation map.", StatusKind::Warning);
         return;
     }
     try {
@@ -762,7 +801,7 @@ void App::buildTestMap()
              L".shadowtest" + extension);
         const wchar_t* pattern = extension == L".w3m" ? L"*.w3m" : L"*.w3x";
         const wchar_t* defaultExtension = extension == L".w3m" ? L"w3m" : L"w3x";
-        const auto output = saveFileDialog(window_, L"Save shadow test map", suggested,
+        const auto output = saveFileDialog(window_, L"Save pattern validation map", suggested,
                                            L"Warcraft III map", pattern, defaultExtension);
         if (!output) {
             setStatus(L"Map creation cancelled.", StatusKind::Neutral);
@@ -771,9 +810,9 @@ void App::buildTestMap()
         MapArchive::replaceShadowInCopy(*mapPath_, *output, shadowMap_->bytes(), true);
         setStatus(L"Created and validated: " + output->filename().wstring(), StatusKind::Success);
     } catch (const std::invalid_argument& error) {
-        showError(L"Build test map", error);
+        showError(L"Build pattern test", error);
     } catch (const std::exception& error) {
-        showError(L"Build test map", error);
+        showError(L"Build pattern test", error);
     }
 }
 
@@ -864,6 +903,8 @@ void App::paint()
     renderTarget_->DrawRoundedRectangle(badge, warningBrush_.Get(), 1.0F);
     drawText(L"●  VALIDATION MODE", badgeRect, buttonFormat_.Get(), warningBrush_.Get());
 
+    drawButton(layout.help, L"?  Help", Target::Help, false);
+
     drawCard(layout.mapCard);
     drawText(L"Map", D2D1::RectF(layout.mapCard.left + 16.0F, layout.mapCard.top + 14.0F,
                                   layout.mapCard.right, layout.mapCard.top + 38.0F),
@@ -952,7 +993,7 @@ void App::paint()
 
     drawButton(layout.exportShd, L"Export SHD", Target::ExportShd, false);
     drawButton(layout.exportPng, L"Export PNG", Target::ExportPng, false);
-    drawButton(layout.buildMap, L"Build test map", Target::BuildMap, false, true);
+    drawButton(layout.buildMap, L"Build pattern test", Target::BuildMap, false, true);
 
     ID2D1SolidColorBrush* statusBrush = mutedBrush_.Get();
     if (statusKind_ == StatusKind::Success) statusBrush = successBrush_.Get();
@@ -964,6 +1005,68 @@ void App::paint()
     drawText(status_, D2D1::RectF(layout.status.left + 18.0F, layout.status.top,
                                   layout.status.right, layout.status.bottom),
              smallFormat_.Get(), statusBrush);
+
+    if (showHelp_) {
+        backgroundBrush_->SetOpacity(0.86F);
+        renderTarget_->FillRectangle(D2D1::RectF(0.0F, 0.0F, size.width, size.height),
+                                     backgroundBrush_.Get());
+        backgroundBrush_->SetOpacity(1.0F);
+
+        const float helpWidth = std::min(760.0F, size.width - 80.0F);
+        const float helpHeight = std::min(570.0F, size.height - 80.0F);
+        const float helpLeft = (size.width - helpWidth) / 2.0F;
+        const float helpTop = (size.height - helpHeight) / 2.0F;
+        const auto helpCard = D2D1::RectF(helpLeft, helpTop, helpLeft + helpWidth, helpTop + helpHeight);
+        drawCard(helpCard);
+
+        drawText(L"How to use ShadowMap Tool",
+                 D2D1::RectF(helpLeft + 28.0F, helpTop + 22.0F,
+                             helpCard.right - 28.0F, helpTop + 58.0F),
+                 titleFormat_.Get(), textBrush_.Get());
+        drawText(L"Press F1 to open Help · Esc to close",
+                 D2D1::RectF(helpLeft + 29.0F, helpTop + 58.0F,
+                             helpCard.right - 28.0F, helpTop + 80.0F),
+                 smallFormat_.Get(), mutedBrush_.Get());
+
+        drawText(L"Full shadow calculation",
+                 D2D1::RectF(helpLeft + 28.0F, helpTop + 96.0F,
+                             helpCard.right - 28.0F, helpTop + 122.0F),
+                 headingFormat_.Get(), warningBrush_.Get());
+        drawText(
+            L"Not available in version 0.2. This build does not yet parse terrain, cliffs, doodads, "
+            L"destructibles, or model geometry, and it does not ray-trace calculated shadows. "
+            L"A validation pattern is not a finished shadowmap for normal gameplay.",
+            D2D1::RectF(helpLeft + 28.0F, helpTop + 126.0F,
+                        helpCard.right - 28.0F, helpTop + 192.0F),
+            helpBodyFormat_.Get(), textBrush_.Get());
+
+        drawText(L"Create a validation map",
+                 D2D1::RectF(helpLeft + 28.0F, helpTop + 210.0F,
+                             helpCard.right - 28.0F, helpTop + 236.0F),
+                 headingFormat_.Get(), textBrush_.Get());
+        drawText(
+            L"1. Browse to or drop a .w3x/.w3m map.\n"
+            L"2. Select Black, White, Checker, X/Y gradient, or Quadrants.\n"
+            L"3. Keep Save as copy selected.\n"
+            L"4. Choose Build pattern test and save the new map.\n"
+            L"5. Open the copy in Warcraft III without saving it in World Editor first.\n"
+            L"6. Compare the in-game result with the preview to verify byte meaning and orientation.",
+            D2D1::RectF(helpLeft + 28.0F, helpTop + 240.0F,
+                        helpCard.right - 28.0F, helpTop + 370.0F),
+            helpBodyFormat_.Get(), textBrush_.Get());
+
+        drawText(L"What comes next",
+                 D2D1::RectF(helpLeft + 28.0F, helpTop + 388.0F,
+                             helpCard.right - 28.0F, helpTop + 414.0F),
+                 headingFormat_.Get(), textBrush_.Get());
+        drawText(
+            L"After SHD compatibility is confirmed, full generation requires terrain reconstruction, "
+            L"object-data and MDX/CASC asset loading, spatial acceleration, and parallel ray casting.",
+            D2D1::RectF(helpLeft + 28.0F, helpTop + 418.0F,
+                        helpCard.right - 150.0F, helpTop + 474.0F),
+            helpBodyFormat_.Get(), mutedBrush_.Get());
+        drawButton(layout.helpClose, L"Close", Target::HelpClose, false, true);
+    }
 
     const HRESULT result = renderTarget_->EndDraw();
     if (result == D2DERR_RECREATE_TARGET) discardDeviceResources();
