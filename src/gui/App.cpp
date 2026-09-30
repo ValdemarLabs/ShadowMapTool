@@ -738,7 +738,7 @@ App::Layout App::calculateLayout() const
                                 layout.mapCard.right - 16.0F, layout.mapCard.top + 98.0F);
 
     layout.patternCard = D2D1::RectF(margin, contentTop + 130.0F,
-                                     margin + leftWidth, contentTop + 374.0F);
+                                     margin + leftWidth, contentTop + 452.0F);
     const float optionLeft = layout.patternCard.left + 16.0F;
     const float optionWidth = (leftWidth - 42.0F) / 2.0F;
     for (std::size_t index = 0; index < layout.patterns.size(); ++index) {
@@ -759,17 +759,25 @@ App::Layout App::calculateLayout() const
             optionLeft + column * (optionWidth + 10.0F) + optionWidth,
             layout.patternCard.top + 87.0F + row * 46.0F);
     }
+    const float qualityWidth = (leftWidth - 52.0F) / 3.0F;
+    for (std::size_t index = 0; index < layout.qualityOptions.size(); ++index) {
+        layout.qualityOptions[index] = D2D1::RectF(
+            optionLeft + static_cast<float>(index) * (qualityWidth + 10.0F),
+            layout.patternCard.top + 202.0F,
+            optionLeft + static_cast<float>(index) * (qualityWidth + 10.0F) + qualityWidth,
+            layout.patternCard.top + 239.0F);
+    }
     const float editWidth = 62.0F;
     for (std::size_t index = 0; index < layout.lightEdits.size(); ++index) {
         layout.lightEdits[index] = D2D1::RectF(
             optionLeft + static_cast<float>(index) * (editWidth + 22.0F),
-            layout.patternCard.top + 202.0F,
+            layout.patternCard.top + 276.0F,
             optionLeft + static_cast<float>(index) * (editWidth + 22.0F) + editWidth,
-            layout.patternCard.top + 236.0F);
+            layout.patternCard.top + 310.0F);
     }
 
-    layout.outputCard = D2D1::RectF(margin, contentTop + 388.0F,
-                                    margin + leftWidth, contentTop + 484.0F);
+    layout.outputCard = D2D1::RectF(margin, contentTop + 466.0F,
+                                    margin + leftWidth, contentTop + 562.0F);
     const float modeWidth = (leftWidth - 42.0F) / 2.0F;
     layout.copyMode = D2D1::RectF(layout.outputCard.left + 16.0F, layout.outputCard.top + 44.0F,
                                   layout.outputCard.left + 16.0F + modeWidth,
@@ -866,6 +874,12 @@ App::Target App::hitTest(const float x, const float y) const
                 return static_cast<Target>(static_cast<int>(Target::Terrain) + static_cast<int>(index));
             }
         }
+        for (std::size_t index = 0; index < layout.qualityOptions.size(); ++index) {
+            if (contains(layout.qualityOptions[index], x, y)) {
+                return static_cast<Target>(
+                    static_cast<int>(Target::ShadowSamples1) + static_cast<int>(index));
+            }
+        }
     }
     if (contains(layout.copyMode, x, y)) return Target::CopyMode;
     if (contains(layout.inPlaceMode, x, y)) return Target::InPlaceMode;
@@ -904,7 +918,7 @@ void App::moveFocus(const bool backwards)
         return;
     }
     const auto available = [this](const Target target) {
-        if (target >= Target::Terrain && target <= Target::TerrainSmooth) return !testMode_;
+        if (target >= Target::Terrain && target <= Target::ShadowSamples4) return !testMode_;
         if (target >= Target::PatternBlack && target <= Target::PatternQuadrants) return testMode_;
         return target >= Target::Browse && target <= Target::Help;
     };
@@ -946,6 +960,18 @@ void App::activate(const Target target)
         break;
     case Target::TerrainSmooth:
         terrainGeometry_ = TerrainGeometryMode::SmoothSubTile;
+        calculationDirty_ = previewKind_ == PreviewKind::Calculated;
+        break;
+    case Target::ShadowSamples1:
+        shadowSampleGrid_ = 1U;
+        calculationDirty_ = previewKind_ == PreviewKind::Calculated;
+        break;
+    case Target::ShadowSamples2:
+        shadowSampleGrid_ = 2U;
+        calculationDirty_ = previewKind_ == PreviewKind::Calculated;
+        break;
+    case Target::ShadowSamples4:
+        shadowSampleGrid_ = 4U;
         calculationDirty_ = previewKind_ == PreviewKind::Calculated;
         break;
     case Target::PatternBlack: selectPattern(Pattern::Black); break;
@@ -1324,6 +1350,7 @@ void App::calculateShadows()
         }
         GenerationOptions options;
         options.lightDirection = readLightDirection();
+        options.shadowSampleGrid = shadowSampleGrid_;
         options.terrainGeometry = terrainGeometry_;
         options.terrain = includeTerrain_;
         options.doodads = includeDoodads_;
@@ -1336,7 +1363,8 @@ void App::calculateShadows()
         refreshPreviewBitmap();
         InvalidateRect(window_, nullptr, FALSE);
         std::wostringstream message;
-        message << L"Preview rendered · " << generated.stats.triangles << L" triangles · "
+        message << L"Preview rendered · " << generated.stats.shadowSampleGrid << L"x edge quality · "
+                << generated.stats.triangles << L" triangles · "
                 << generated.warnings.size() << L" warnings · inspect it, then Save to map";
         setStatus(message.str(), generated.warnings.empty() ? StatusKind::Success : StatusKind::Warning);
     } catch (const std::invalid_argument& error) {
@@ -1528,9 +1556,22 @@ void App::paint()
                                                     static_cast<int>(index));
             drawButton(layout.calculationOptions[index], labels[index], target, selected[index]);
         }
-        drawText(L"Light vector (X, Y, Z) · default 1, 1, -1",
+        drawText(L"Shadow edge quality",
                  D2D1::RectF(layout.patternCard.left + 16.0F, layout.patternCard.top + 180.0F,
                              layout.patternCard.right - 16.0F, layout.patternCard.top + 201.0F),
+                 smallFormat_.Get(), mutedBrush_.Get());
+        constexpr std::array<std::wstring_view, 3> qualityLabels{
+            L"Fast 1x", L"Smooth 2x", L"Ultra 4x"};
+        constexpr std::array<std::uint32_t, 3> qualityValues{1U, 2U, 4U};
+        for (std::size_t index = 0; index < qualityLabels.size(); ++index) {
+            const auto target = static_cast<Target>(
+                static_cast<int>(Target::ShadowSamples1) + static_cast<int>(index));
+            drawButton(layout.qualityOptions[index], qualityLabels[index], target,
+                       shadowSampleGrid_ == qualityValues[index]);
+        }
+        drawText(L"Light vector (X, Y, Z) · default 1, 1, -1",
+                 D2D1::RectF(layout.patternCard.left + 16.0F, layout.patternCard.top + 250.0F,
+                             layout.patternCard.right - 16.0F, layout.patternCard.top + 271.0F),
                  smallFormat_.Get(), mutedBrush_.Get());
         constexpr std::array<std::wstring_view, 3> axes{L"X", L"Y", L"Z"};
         for (std::size_t index = 0; index < axes.size(); ++index) {
@@ -1700,10 +1741,9 @@ void App::paint()
                              helpCard.right - 28.0F, helpTop + 122.0F),
                  headingFormat_.Get(), warningBrush_.Get());
         drawText(
-            L"Choose Terrain, Doodads, and Destructibles independently. Smooth sub-tile is the "
-            L"default terrain mode; Classic triangles reproduces the version-1 heightfield. "
-            L"Set the light vector (default 1, 1, -1), then choose Calculate shadows. Inspect "
-            L"the rendered preview before choosing Save to map.",
+            L"Choose shadow sources and terrain mode. Ultra 4x is the default edge quality; "
+            L"Smooth 2x and Fast 1x trade quality for speed. Set the light vector (default "
+            L"1, 1, -1), choose Calculate shadows, inspect the rendered preview, then Save to map.",
             D2D1::RectF(helpLeft + 28.0F, helpTop + 126.0F,
                         helpCard.right - 28.0F, helpTop + 192.0F),
             helpBodyFormat_.Get(), textBrush_.Get());

@@ -54,6 +54,7 @@ struct Options {
     std::optional<float> lightY;
     std::optional<float> lightZ;
     std::optional<std::uint32_t> threads;
+    std::uint32_t shadowSampleGrid = 4;
     TerrainGeometryMode terrainGeometry = TerrainGeometryMode::SmoothSubTile;
     bool terrain = true;
     bool doodads = true;
@@ -66,10 +67,11 @@ struct Options {
 void printHelp()
 {
     std::cout <<
-        "w3shadow 1.1.0 - Warcraft III static shadow-map generator\n\n"
+        "w3shadow 1.2.0 - Warcraft III static shadow-map generator\n\n"
         "Commands:\n"
         "  generate MAP [--output MAP | --in-place] [--war3-dir DIR] [--asset-dir DIR]\n"
         "               [--light-x N --light-y N --light-z N] [--threads N]\n"
+        "               [--edge-samples 1|2|4]\n"
         "               [--smooth-terrain | --classic-terrain]\n"
         "               [--no-terrain] [--no-doodads] [--no-destructibles]\n"
         "               [--no-honor-ignore-shadow] [--casc-lib FILE]\n"
@@ -144,6 +146,12 @@ Options parseOptions(const int argc, char* argv[], const int first)
             options.lightZ = parseFiniteFloat(requireValue(argument), argument);
         } else if (argument == "--threads") {
             options.threads = parsePositiveU32(requireValue(argument), argument);
+        } else if (argument == "--edge-samples") {
+            options.shadowSampleGrid = parsePositiveU32(requireValue(argument), argument);
+            if (options.shadowSampleGrid != 1U && options.shadowSampleGrid != 2U &&
+                options.shadowSampleGrid != 4U) {
+                throw std::invalid_argument("--edge-samples requires 1, 2, or 4");
+            }
         } else if (argument == "--smooth-terrain") {
             options.terrainGeometry = TerrainGeometryMode::SmoothSubTile;
         } else if (argument == "--classic-terrain") {
@@ -422,6 +430,7 @@ int commandGenerate(const int argc, char* argv[])
     if (options.lightY) generation.lightDirection.y = *options.lightY;
     if (options.lightZ) generation.lightDirection.z = *options.lightZ;
     if (options.threads) generation.threadCount = *options.threads;
+    generation.shadowSampleGrid = options.shadowSampleGrid;
     generation.terrainGeometry = options.terrainGeometry;
     generation.terrain = options.terrain;
     generation.doodads = options.doodads;
@@ -447,8 +456,11 @@ int commandGenerate(const int argc, char* argv[])
               << result.stats.unresolvedPlacements << " unresolved, "
               << result.stats.uniqueModels << " unique models, "
               << result.stats.triangles << " triangles\n"
-              << "Shadow: " << result.stats.shadowedSamples << '/' << result.stats.rays
-              << " samples in " << std::fixed << std::setprecision(3) << total << " s"
+              << "Shadow: " << result.stats.shadowedSamples << '/'
+              << static_cast<std::uint64_t>(result.stats.mapWidth) * result.stats.mapHeight * 16U
+              << " pixels from " << result.stats.rays << " rays ("
+              << result.stats.shadowSampleGrid << 'x' << result.stats.shadowSampleGrid
+              << ") in " << std::fixed << std::setprecision(3) << total << " s"
               << " (load " << result.stats.loadSeconds << ", BVH " << result.stats.bvhSeconds
               << ", rays " << result.stats.raySeconds << ")\n";
     for (const auto& warning : result.warnings) std::cerr << "WARN: " << warning << '\n';

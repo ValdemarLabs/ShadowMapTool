@@ -1,6 +1,6 @@
 # ShadowMapTool
 
-ShadowMapTool 1.1 is a native Warcraft III static-shadow generator for `.w3x` and `.w3m` maps. It implements the pipeline described in [`wc3_shadowmap_tool_analysis.md`](../_developer/Shadowmap/wc3_shadowmap_tool_analysis.md): map parsing, terrain and placed-object geometry reconstruction, accelerated ray casting, SHD preview/export, and guarded map output. Version 1.1 adds a smoother terrain reconstruction while retaining the original version-1 triangulation as a selectable compatibility mode.
+ShadowMapTool 1.2 is a native Warcraft III static-shadow generator for `.w3x` and `.w3m` maps. It implements the pipeline described in [`wc3_shadowmap_tool_analysis.md`](../_developer/Shadowmap/wc3_shadowmap_tool_analysis.md): map parsing, terrain and placed-object geometry reconstruction, accelerated ray casting, SHD preview/export, and guarded map output. Version 1.2 adds selectable 1x, 2x, and 4x per-pixel edge supersampling; the smoother terrain reconstruction and original version-1 triangulation remain independently selectable.
 
 The implementation includes:
 
@@ -8,6 +8,7 @@ The implementation includes:
 - stock object-data resolution from SLK data plus current Reforged doodad/destructible skin profiles;
 - map-imported MDX priority, extracted-directory fallback, and runtime Warcraft CASC access;
 - transformed doodad/destructible geometry, a median-split BVH, model caching, and parallel ray casting;
+- strict-majority 1x, 2x, or 4x shadow-cell supersampling for cleaner binary SHD edges;
 - case-insensitive `IgnoreShadow...` region exclusion;
 - Object Editor `dshd`/`bshd` shadow filtering, including **Has shadow: False**;
 - bottom-to-top Warcraft SHD serialization with normal top-down GUI and PNG previews;
@@ -66,13 +67,16 @@ To calculate the complete shadowmap:
 2. Open **Assets** if the Warcraft III installation or `CascLib.dll` location needs changing.
 3. Choose whether Terrain, Doodads, and Destructibles contribute shadows.
 4. Choose **Smooth sub-tile** (default) or **Classic triangles** for terrain geometry.
-5. Keep the default light vector `(1, 1, -1)`, or enter custom X/Y/Z values.
-6. Select **Calculate shadows**. This renders the complete proposed SHD in memory and does not modify or create a map.
-7. Inspect the calculated full-map preview and warning count. Change settings and calculate again if needed.
-8. Keep **Save as copy** selected for the first run, then select **Save to map** and choose the output map.
-9. Open the copy directly in Warcraft III for validation before saving it in World Editor.
+5. Choose **Ultra 4x** edge quality for the smoothest outline, **Smooth 2x** for a faster compromise, or **Fast 1x** for the original single-ray behavior.
+6. Keep the default light vector `(1, 1, -1)`, or enter custom X/Y/Z values.
+7. Select **Calculate shadows**. This renders the complete proposed SHD in memory and does not modify or create a map.
+8. Inspect the calculated full-map preview and warning count. Change settings and calculate again if needed.
+9. Keep **Save as copy** selected for the first run, then select **Save to map** and choose the output map.
+10. Open the copy directly in Warcraft III for validation before saving it in World Editor.
 
 **Smooth sub-tile** bilinearly reconstructs each terrain tile on a 2 × 2 sub-grid. This reduces visible diagonal facet/ridge artifacts while keeping the Warcraft heightfield and costs four times as many terrain triangles. **Classic triangles** uses the original two triangles per tile and is provided for version-1 result compatibility and lower geometry cost. Neither option reconstructs Warcraft cliff-art model faces.
+
+Edge quality is separate from terrain geometry. **Fast 1x**, **Smooth 2x**, and **Ultra 4x** cast 1, 4, or 16 regularly spaced rays inside every fixed Warcraft SHD cell and classify the cell by strict majority coverage. This reduces stair-stepping and isolated boundary noise while retaining the required binary `0x00`/`0xFF`, four-cells-per-tile SHD format. It cannot increase Warcraft's native shadow texture resolution; Ultra 4x can take roughly sixteen times the ray-casting work of Fast 1x on a large map.
 
 The **In place + backup** mode asks for confirmation and preserves a numbered `.w3shadow.bak` copy. Opening a map previews its existing SHD, which can be empty; **Calculate shadows** replaces that view with the newly rendered complete SHD before anything is saved. Changing a calculation option marks the result stale and disables saving until it is recalculated. Diagnostic patterns are only available while **Test mode** is on. **Export SHD** and **Export PNG** export whichever full-map preview is currently shown.
 
@@ -106,6 +110,7 @@ Select asset sources and performance settings:
 w3shadow generate MyMap.w3x `
     --war3-dir "C:\Program Files (x86)\Warcraft III" `
     --casc-lib C:\Tools\CascLib.dll `
+    --edge-samples 4 `
     --threads 8
 ```
 
@@ -113,6 +118,7 @@ Useful generation options:
 
 - `--asset-dir DIR` supplies an extracted Warcraft-style virtual asset tree;
 - `--light-x N --light-y N --light-z N` changes the default `(1, 1, -1)` light direction;
+- `--edge-samples 1|2|4` selects Fast, Smooth, or Ultra edge supersampling (default `4`);
 - `--smooth-terrain` selects the improved 2 × 2 sub-tile terrain reconstruction (default);
 - `--classic-terrain` selects the original version-1 two-triangles-per-tile reconstruction;
 - `--no-terrain`, `--no-doodads`, and `--no-destructibles` isolate geometry categories;
@@ -155,6 +161,6 @@ The tool stores working previews top-to-bottom and reverses rows only at the War
 
 The generator uses the MDX bind/default pose and treats parsed geoset triangles as opaque. Animated visibility, texture-alpha/material filtering, automatic alpha-tile exclusion, exact cliff-model faces, and World Editor post-processing remain compatibility work that requires isolated in-game reference maps. Terrain cliff-layer elevations are included. Smooth sub-tile mode improves the heightfield surface but does not reconstruct cliff art models.
 
-The paired 64 x 64 reference maps in `_developer/Shadowmap/shadowmap maps/` establish that SHD orientation and byte polarity are correct, but also quantify the current rendering difference: World Editor writes 2,050 shadowed samples while the same scene in Smooth sub-tile mode writes 4,631. Their intersection-over-union is 29.4%. Classic triangles is somewhat closer on this mixed scene (33.0%), so Smooth sub-tile should be understood as a terrain-facet reduction feature, not a World Editor matching mode. The remaining difference is consistent with World Editor selecting posed/visible/material-aware model surfaces and handling cliff geometry differently; further behavior changes need isolated terrain, cliff, opaque-model, and alpha-tested-model reference pairs rather than tuning to this single mixed map.
+The paired 64 x 64 reference maps in `_developer/Shadowmap/shadowmap maps/` establish that SHD orientation and byte polarity are correct, but also quantify the current rendering difference: World Editor writes 2,050 shadowed samples while the version-2 Smooth sub-tile/Fast 1x fixture writes 4,631. Their intersection-over-union is 29.4%. Classic triangles at Fast 1x is somewhat closer on this mixed scene (33.0%), so Smooth sub-tile should be understood as a terrain-facet reduction feature, not a World Editor matching mode. The remaining difference is consistent with World Editor selecting posed/visible/material-aware model surfaces and handling cliff geometry differently; further behavior changes need isolated terrain, cliff, opaque-model, and alpha-tested-model reference pairs rather than tuning to this single mixed map.
 
 The format, archive, parser, BVH, GUI-smoke, production 50,118-placement DOO fixture, current-map DOO/W3B/W3D/W3R, Object Editor shadow override, and terrain-only end-to-end paths are automated. The installed-Warcraft integration test validates stock SLK/profile and MDX resolution when a Warcraft III installation is available.

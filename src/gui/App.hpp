@@ -37,6 +37,9 @@ private:
         IgnoreRegions,
         TerrainClassic,
         TerrainSmooth,
+        ShadowSamples1,
+        ShadowSamples2,
+        ShadowSamples4,
         PatternBlack,
         PatternWhite,
         PatternChecker,
@@ -65,6 +68,7 @@ private:
         D2D1_RECT_F browse{};
         D2D1_RECT_F patternCard{};
         std::array<D2D1_RECT_F, 6> calculationOptions{};
+        std::array<D2D1_RECT_F, 3> qualityOptions{};
         std::array<D2D1_RECT_F, 6> patterns{};
         std::array<D2D1_RECT_F, 3> lightEdits{};
         D2D1_RECT_F outputCard{};
@@ -181,6 +185,7 @@ private:
     bool includeDestructibles_ = true;
     bool honorIgnoreRegions_ = true;
     TerrainGeometryMode terrainGeometry_ = TerrainGeometryMode::SmoothSubTile;
+    std::uint32_t shadowSampleGrid_ = 4;
     bool calculationDirty_ = false;
     std::optional<std::filesystem::path> warcraftDirectory_;
     std::optional<std::filesystem::path> cascLibrary_;

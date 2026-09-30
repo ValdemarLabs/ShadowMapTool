@@ -15,6 +15,7 @@ namespace w3shadow {
 struct GenerationOptions {
     Vec3 lightDirection{1.0F, 1.0F, -1.0F};
     std::uint32_t threadCount = 0;
+    std::uint32_t shadowSampleGrid = 4;
     float rayOriginOffset = 0.5F;
     TerrainGeometryMode terrainGeometry = TerrainGeometryMode::SmoothSubTile;
     bool terrain = true;
@@ -32,6 +33,7 @@ struct GenerationStats {
     std::size_t uniqueModels = 0;
     std::size_t triangles = 0;
     std::size_t ignoredRegions = 0;
+    std::uint32_t shadowSampleGrid = 1;
     std::uint64_t rays = 0;
     std::uint64_t shadowedSamples = 0;
     double loadSeconds = 0.0;

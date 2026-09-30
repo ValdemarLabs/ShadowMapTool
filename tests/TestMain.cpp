@@ -8,6 +8,7 @@
 #include "geometry/BVH.hpp"
 #include "objects/ObjectDatabase.hpp"
 #include "shadow/Pattern.hpp"
+#include "shadow/ShadowGenerator.hpp"
 #include "shadow/ShadowMap.hpp"
 #include "util/FileIO.hpp"
 
@@ -478,6 +479,39 @@ void testWorldEditorReferencePair()
             "version-2 Smooth sub-tile reference SHD pixel count changed");
     require(worldEditorShadow != toolShadow,
             "reference SHDs unexpectedly became byte-identical");
+
+    w3shadow::CompositeAssetProvider noObjectAssets;
+    w3shadow::GenerationOptions fastOptions;
+    fastOptions.shadowSampleGrid = 1U;
+    fastOptions.doodads = false;
+    fastOptions.destructibles = false;
+    const auto fast = w3shadow::generateShadowMap(
+        worldEditorMap, noObjectAssets, fastOptions);
+    require(fast.stats.shadowSampleGrid == 1U && fast.stats.rays == 65536U,
+            "1x edge-quality ray count is wrong");
+
+    auto ultraOptions = fastOptions;
+    ultraOptions.shadowSampleGrid = 4U;
+    const auto ultra = w3shadow::generateShadowMap(
+        worldEditorMap, noObjectAssets, ultraOptions);
+    require(ultra.stats.shadowSampleGrid == 4U && ultra.stats.rays == 1048576U,
+            "4x edge-quality ray count is wrong");
+    require(std::all_of(ultra.shadow.bytes().begin(), ultra.shadow.bytes().end(),
+                        [](const std::byte value) {
+                            return value == std::byte{0} || value == std::byte{0xFF};
+                        }),
+            "supersampling produced non-binary SHD values");
+
+    auto invalidOptions = fastOptions;
+    invalidOptions.shadowSampleGrid = 3U;
+    bool rejectedInvalidGrid = false;
+    try {
+        static_cast<void>(w3shadow::generateShadowMap(
+            worldEditorMap, noObjectAssets, invalidOptions));
+    } catch (const std::invalid_argument&) {
+        rejectedInvalidGrid = true;
+    }
+    require(rejectedInvalidGrid, "invalid shadow sample grid was accepted");
 #endif
 }
 

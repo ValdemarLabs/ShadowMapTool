@@ -38,6 +38,10 @@ GenerationResult generateShadowMap(
     const MapArchive& archive, const AssetProvider& assets,
     const GenerationOptions& options)
 {
+    if (options.shadowSampleGrid != 1U && options.shadowSampleGrid != 2U &&
+        options.shadowSampleGrid != 4U) {
+        throw std::invalid_argument("shadow sample grid must be 1, 2, or 4");
+    }
     const auto start = Clock::now();
     const auto parsedTerrain = parseW3E(archive.read("war3map.w3e"));
     if (!parsedTerrain) throw std::runtime_error(parsedTerrain.error);
@@ -45,6 +49,7 @@ GenerationResult generateShadowMap(
     GenerationResult result{ShadowMap(terrain.info.tileWidth, terrain.info.tileHeight)};
     result.stats.mapWidth = terrain.info.tileWidth;
     result.stats.mapHeight = terrain.info.tileHeight;
+    result.stats.shadowSampleGrid = options.shadowSampleGrid;
 
     if (options.terrain) {
         result.sceneTriangles = terrain.terrainTriangles(options.terrainGeometry);
@@ -157,6 +162,8 @@ GenerationResult generateShadowMap(
         ? std::max(1U, std::thread::hardware_concurrency())
         : options.threadCount;
     std::atomic<std::uint32_t> nextRow{0};
+    const auto samplesPerPixel = options.shadowSampleGrid * options.shadowSampleGrid;
+    const auto requiredOccluded = samplesPerPixel / 2U + 1U;
     std::atomic<std::uint64_t> shadowed{0};
     std::vector<std::thread> workers;
     workers.reserve(workerCount);
@@ -166,23 +173,39 @@ GenerationResult generateShadowMap(
             for (;;) {
                 const auto y = nextRow.fetch_add(1U, std::memory_order_relaxed);
                 if (y >= result.shadow.heightPixels()) break;
-                const auto worldY = terrain.info.offsetY +
-                                    static_cast<float>(terrain.info.tileHeight) * 128.0F -
-                                    (static_cast<float>(y) + 0.5F) * 32.0F;
                 for (std::uint32_t x = 0; x < result.shadow.widthPixels(); ++x) {
-                    const auto worldX = terrain.info.offsetX + (static_cast<float>(x) + 0.5F) * 32.0F;
-                    const auto ignored = std::any_of(
-                        ignoreShadowRegions.begin(), ignoreShadowRegions.end(),
-                        [&](const MapRegion& region) { return region.contains(worldX, worldY); });
-                    if (ignored) {
-                        result.shadow.set(x, y, false);
-                        continue;
+                    std::uint32_t occludedSamples = 0;
+                    for (std::uint32_t sampleY = 0; sampleY < options.shadowSampleGrid; ++sampleY) {
+                        const auto fractionY =
+                            (static_cast<float>(sampleY) + 0.5F) /
+                            static_cast<float>(options.shadowSampleGrid);
+                        const auto worldY = terrain.info.offsetY +
+                            static_cast<float>(terrain.info.tileHeight) * 128.0F -
+                            (static_cast<float>(y) + fractionY) * 32.0F;
+                        for (std::uint32_t sampleX = 0;
+                             sampleX < options.shadowSampleGrid; ++sampleX) {
+                            const auto fractionX =
+                                (static_cast<float>(sampleX) + 0.5F) /
+                                static_cast<float>(options.shadowSampleGrid);
+                            const auto worldX = terrain.info.offsetX +
+                                (static_cast<float>(x) + fractionX) * 32.0F;
+                            const auto ignored = std::any_of(
+                                ignoreShadowRegions.begin(), ignoreShadowRegions.end(),
+                                [&](const MapRegion& region) {
+                                    return region.contains(worldX, worldY);
+                                });
+                            if (ignored) continue;
+                            const auto height =
+                                terrain.sampleHeight(worldX, worldY, options.terrainGeometry);
+                            const Vec3 origin{
+                                worldX, worldY, height + options.rayOriginOffset};
+                            if (scene.intersects(origin, rayDirection,
+                                                 options.rayOriginOffset * 0.25F)) {
+                                ++occludedSamples;
+                            }
+                        }
                     }
-                    const auto height =
-                        terrain.sampleHeight(worldX, worldY, options.terrainGeometry);
-                    const Vec3 origin{worldX, worldY, height + options.rayOriginOffset};
-                    const auto occluded = scene.intersects(origin, rayDirection,
-                                                           options.rayOriginOffset * 0.25F);
+                    const auto occluded = occludedSamples >= requiredOccluded;
                     result.shadow.set(x, y, occluded);
                     if (occluded) ++localShadowed;
                 }
@@ -194,7 +217,7 @@ GenerationResult generateShadowMap(
     const auto finished = Clock::now();
     result.stats.raySeconds = elapsed(built, finished);
     result.stats.rays = static_cast<std::uint64_t>(result.shadow.widthPixels()) *
-                        result.shadow.heightPixels();
+                        result.shadow.heightPixels() * samplesPerPixel;
     result.stats.shadowedSamples = shadowed.load();
     return result;
 }
