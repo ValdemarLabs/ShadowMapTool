@@ -170,11 +170,20 @@ void testGeometryAndFormats()
     appendTag(doo, "LTlt");
     doo.push_back(std::byte{0}); doo.push_back(std::byte{100});
     appendU32(doo, 0xFFFFFFFFU); appendU32(doo, 0U); appendU32(doo, 77U);
+    appendU32(doo, 0U); appendU32(doo, 2U);
+    appendTag(doo, "CLfa"); appendU32(doo, 3U); appendU32(doo, 12U); appendU32(doo, 34U);
+    appendTag(doo, "CLfb"); appendU32(doo, 1U); appendU32(doo, 56U); appendU32(doo, 78U);
     const auto parsedDoo = w3shadow::parseDOO(doo);
     require(static_cast<bool>(parsedDoo), parsedDoo.error);
     require(parsedDoo.placements.size() == 1U && parsedDoo.placements[0].rawcode == "LTlt",
             "DOO placement was not decoded");
     require(parsedDoo.placements[0].skinRawcode == "LTlt", "DOO v8 skin rawcode was not decoded");
+    require(parsedDoo.specialVersion == 0U && parsedDoo.specialPlacements.size() == 2U,
+            "DOO special-doodad section was not decoded");
+    require(parsedDoo.specialPlacements[0].rawcode == "CLfa" &&
+            parsedDoo.specialPlacements[0].variation == 3U &&
+            parsedDoo.specialPlacements[0].tileX == 12 && parsedDoo.specialPlacements[0].tileY == 34,
+            "DOO special-doodad record is misaligned");
 
     std::vector<std::byte> doo13;
     appendTag(doo13, "W3do"); appendU32(doo13, 13U); appendU32(doo13, 11U); appendU32(doo13, 1U);
@@ -440,6 +449,38 @@ void testArchiveReplacement()
     }
 }
 
+void testWorldEditorReferencePair()
+{
+#if defined(W3SHADOW_WE_SHADOW_FIXTURE) && defined(W3SHADOW_TOOL_SHADOW_FIXTURE)
+    const w3shadow::MapArchive worldEditorMap(
+        std::filesystem::path(W3SHADOW_WE_SHADOW_FIXTURE));
+    const w3shadow::MapArchive toolMap(
+        std::filesystem::path(W3SHADOW_TOOL_SHADOW_FIXTURE));
+
+    require(worldEditorMap.read("war3map.w3e") == toolMap.read("war3map.w3e"),
+            "reference maps do not contain the same terrain");
+    require(worldEditorMap.read("war3map.doo") == toolMap.read("war3map.doo"),
+            "reference maps do not contain the same doodad placements");
+
+    const auto worldEditorShadow = worldEditorMap.read("war3map.shd");
+    const auto toolShadow = toolMap.read("war3map.shd");
+    require(worldEditorShadow.size() == 65536U && toolShadow.size() == 65536U,
+            "reference SHD dimensions changed");
+    const auto shadowedCount = [](const std::vector<std::byte>& bytes) {
+        return static_cast<std::size_t>(std::count_if(
+            bytes.begin(), bytes.end(), [](const std::byte value) {
+                return value != std::byte{0};
+            }));
+    };
+    require(shadowedCount(worldEditorShadow) == 2050U,
+            "World Editor reference SHD pixel count changed");
+    require(shadowedCount(toolShadow) == 4631U,
+            "version-2 Smooth sub-tile reference SHD pixel count changed");
+    require(worldEditorShadow != toolShadow,
+            "reference SHDs unexpectedly became byte-identical");
+#endif
+}
+
 } // namespace
 
 int main()
@@ -454,6 +495,7 @@ int main()
         testRegions();
         testPng();
         testArchiveReplacement();
+        testWorldEditorReferencePair();
         std::cout << "All tests passed\n";
         return 0;
     } catch (const std::exception& error) {

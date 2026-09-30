@@ -27,10 +27,20 @@ struct DoodadPlacement {
     std::uint32_t editorId = 0;
 };
 
+struct SpecialDoodadPlacement {
+    std::string rawcode;
+    std::uint32_t variation = 0;
+    std::int32_t tileX = 0;
+    std::int32_t tileY = 0;
+};
+
 struct DOOParseResult {
     std::uint32_t version = 0;
     std::uint32_t subversion = 0;
     std::vector<DoodadPlacement> placements;
+    std::uint32_t specialVersion = 0;
+    std::vector<SpecialDoodadPlacement> specialPlacements;
+    std::size_t trailingBytes = 0;
     std::string error;
 
     [[nodiscard]] explicit operator bool() const noexcept { return error.empty(); }

@@ -74,6 +74,25 @@ DOOParseResult parseImpl(const std::span<const std::byte> bytes)
         }
         result.placements.push_back(std::move(placement));
     }
+    if (!reader.empty()) {
+        result.specialVersion = reader.readU32("special doodad version");
+        const auto specialCount = reader.readU32("special doodad count");
+        constexpr std::size_t specialRecordSize = 16U;
+        if (specialCount > 10000000U ||
+            static_cast<std::uint64_t>(specialCount) * specialRecordSize > reader.remaining()) {
+            throw std::runtime_error("DOO parse error: invalid special doodad count");
+        }
+        result.specialPlacements.reserve(specialCount);
+        for (std::uint32_t index = 0; index < specialCount; ++index) {
+            SpecialDoodadPlacement placement;
+            placement.rawcode = reader.readTag("special doodad rawcode");
+            placement.variation = reader.readU32("special doodad variation");
+            placement.tileX = reader.readI32("special doodad tile X");
+            placement.tileY = reader.readI32("special doodad tile Y");
+            result.specialPlacements.push_back(std::move(placement));
+        }
+        result.trailingBytes = reader.remaining();
+    }
     return result;
 }
 

@@ -2,6 +2,7 @@
 
 #include "archive/MapArchive.hpp"
 #include "assets/AssetProvider.hpp"
+#include "formats/DOO.hpp"
 #include "formats/Png.hpp"
 #include "formats/W3E.hpp"
 #include "shadow/Pattern.hpp"
@@ -18,6 +19,7 @@
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <map>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -266,6 +268,33 @@ int commandInspect(const int argc, char* argv[])
               << info.vertexWidth << 'x' << info.vertexHeight << " vertices)\n"
               << "Expected SHD: " << info.tileWidth * 4U << 'x' << info.tileHeight * 4U
               << " pixels, " << expectedShadowBytes(info) << " bytes\n";
+
+    if (archive.contains("war3map.doo")) {
+        const auto doodads = parseDOO(archive.read("war3map.doo"));
+        if (!doodads) {
+            std::cout << "DOO: " << doodads.error << '\n';
+        } else {
+            std::map<std::string, std::uint32_t> specialTypes;
+            for (const auto& placement : doodads.specialPlacements) {
+                ++specialTypes[placement.rawcode];
+            }
+            std::cout << "DOO: version " << doodads.version << '.' << doodads.subversion
+                      << ", " << doodads.placements.size() << " regular placements, "
+                      << doodads.specialPlacements.size() << " special placements";
+            if (!doodads.specialPlacements.empty()) {
+                std::cout << " (section version " << doodads.specialVersion << ')';
+            }
+            if (doodads.trailingBytes != 0U) {
+                std::cout << ", " << doodads.trailingBytes << " unparsed trailing bytes";
+            }
+            std::cout << '\n';
+            for (const auto& [rawcode, count] : specialTypes) {
+                std::cout << "  Special " << rawcode << ": " << count << '\n';
+            }
+        }
+    } else {
+        std::cout << "DOO: not present\n";
+    }
 
     std::optional<std::vector<std::byte>> shadow;
     if (archive.contains("war3map.shd")) {

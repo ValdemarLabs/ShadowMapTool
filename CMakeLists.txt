@@ -147,6 +147,8 @@ if(BUILD_TESTING)
             W3SHADOW_FIXTURE_MAP="${CMAKE_CURRENT_SOURCE_DIR}/../WC3_Database/WC3_default/DefaultMap.w3m"
             W3SHADOW_DOO_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../DoodadHider/_reference/war3map.doo"
             W3SHADOW_CURRENT_MAP_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../ShadowMap_tests/Epic Quests.w3x"
+            W3SHADOW_WE_SHADOW_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../_developer/Shadowmap/shadowmap maps/shadowmaptest_native.w3x"
+            W3SHADOW_TOOL_SHADOW_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../_developer/Shadowmap/shadowmap maps/shadowmaptest.shadowed_v2.w3x"
     )
     set_target_properties(w3shadow_tests PROPERTIES
         CXX_STANDARD ${W3SHADOW_CXX_STANDARD}
