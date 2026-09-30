@@ -1,4 +1,6 @@
 #include <windows.h>
+#include "../src/gui/Resources.h"
 
 1 RT_MANIFEST "w3shadow-gui.manifest"
+IDI_W3SHADOW ICON "favicon.ico"
 

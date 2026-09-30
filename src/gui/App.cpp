@@ -1,4 +1,5 @@
 #include "gui/App.hpp"
+#include "gui/Resources.h"
 
 #include "archive/MapArchive.hpp"
 #include "assets/AssetProvider.hpp"
@@ -18,6 +19,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <cwctype>
 #include <exception>
 #include <memory>
@@ -47,6 +49,49 @@ bool contains(const D2D1_RECT_F& rectangle, const float x, const float y)
 {
     return x >= rectangle.left && x <= rectangle.right &&
            y >= rectangle.top && y <= rectangle.bottom;
+}
+
+bool createIconBitmap(
+    ID2D1RenderTarget* target,
+    const HICON icon,
+    const UINT size,
+    ComPtr<ID2D1Bitmap>& output)
+{
+    BITMAPINFO information{};
+    information.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    information.bmiHeader.biWidth = static_cast<LONG>(size);
+    information.bmiHeader.biHeight = -static_cast<LONG>(size);
+    information.bmiHeader.biPlanes = 1;
+    information.bmiHeader.biBitCount = 32;
+    information.bmiHeader.biCompression = BI_RGB;
+
+    void* pixels = nullptr;
+    const HBITMAP bitmap =
+        CreateDIBSection(nullptr, &information, DIB_RGB_COLORS, &pixels, nullptr, 0);
+    if (bitmap == nullptr || pixels == nullptr) return false;
+    const HDC context = CreateCompatibleDC(nullptr);
+    if (context == nullptr) {
+        DeleteObject(bitmap);
+        return false;
+    }
+
+    const HGDIOBJ previous = SelectObject(context, bitmap);
+    std::memset(pixels, 0, static_cast<std::size_t>(size) * size * 4U);
+    const BOOL drawn = DrawIconEx(context, 0, 0, icon, static_cast<int>(size),
+                                  static_cast<int>(size), 0, nullptr, DI_NORMAL);
+    SelectObject(context, previous);
+    DeleteDC(context);
+    if (!drawn) {
+        DeleteObject(bitmap);
+        return false;
+    }
+
+    const auto properties = D2D1::BitmapProperties(
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+    const HRESULT result = target->CreateBitmap(
+        D2D1::SizeU(size, size), pixels, size * 4U, properties, &output);
+    DeleteObject(bitmap);
+    return SUCCEEDED(result);
 }
 
 std::wstring widen(const std::string_view value)
@@ -335,7 +380,16 @@ bool App::createWindow(HINSTANCE instance, const int showCommand)
     windowClass.lpfnWndProc = windowProcedure;
     windowClass.hInstance = instance;
     windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    windowClass.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    windowClass.hIcon = static_cast<HICON>(LoadImageW(
+        instance, MAKEINTRESOURCEW(IDI_W3SHADOW), IMAGE_ICON,
+        GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON),
+        LR_DEFAULTCOLOR | LR_SHARED));
+    if (windowClass.hIcon == nullptr) windowClass.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    windowClass.hIconSm = static_cast<HICON>(LoadImageW(
+        instance, MAKEINTRESOURCEW(IDI_W3SHADOW), IMAGE_ICON,
+        GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON),
+        LR_DEFAULTCOLOR | LR_SHARED));
+    if (windowClass.hIconSm == nullptr) windowClass.hIconSm = windowClass.hIcon;
     windowClass.hbrBackground = nullptr;
     windowClass.lpszClassName = WindowClassName;
     if (!RegisterClassExW(&windowClass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
@@ -620,6 +674,11 @@ bool App::createDeviceResources()
         format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     }
 
+    const auto appIcon = static_cast<HICON>(LoadImageW(
+        GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDI_W3SHADOW), IMAGE_ICON,
+        64, 64, LR_DEFAULTCOLOR | LR_SHARED));
+    if (appIcon != nullptr) createIconBitmap(renderTarget_.Get(), appIcon, 64U, appIconBitmap_);
+
     if (!shadowMap_) rebuildPreview();
     else refreshPreviewBitmap();
     return true;
@@ -638,6 +697,7 @@ void App::discardDeviceResources()
     successBrush_.Reset();
     warningBrush_.Reset();
     errorBrush_.Reset();
+    appIconBitmap_.Reset();
     titleFormat_.Reset();
     headingFormat_.Reset();
     bodyFormat_.Reset();
@@ -1400,9 +1460,16 @@ void App::paint()
     renderTarget_->BeginDraw();
     renderTarget_->Clear(rgb(0x0B1020));
 
-    const auto logo = D2D1::RoundedRect(D2D1::RectF(28.0F, 24.0F, 68.0F, 64.0F), 11.0F, 11.0F);
-    renderTarget_->FillRoundedRectangle(logo, accentBrush_.Get());
-    drawText(L"S", D2D1::RectF(28.0F, 23.0F, 68.0F, 65.0F), titleFormat_.Get(), textBrush_.Get());
+    const auto logoRect = D2D1::RectF(28.0F, 24.0F, 68.0F, 64.0F);
+    if (appIconBitmap_) {
+        renderTarget_->DrawBitmap(appIconBitmap_.Get(), logoRect, 1.0F,
+                                  D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+    } else {
+        const auto logo = D2D1::RoundedRect(logoRect, 11.0F, 11.0F);
+        renderTarget_->FillRoundedRectangle(logo, accentBrush_.Get());
+        drawText(L"S", D2D1::RectF(28.0F, 23.0F, 68.0F, 65.0F),
+                 titleFormat_.Get(), textBrush_.Get());
+    }
     drawText(L"ShadowMap Tool", D2D1::RectF(82.0F, 19.0F, 390.0F, 53.0F),
              titleFormat_.Get(), textBrush_.Get());
     drawText(L"Warcraft III static-shadow generation workspace",

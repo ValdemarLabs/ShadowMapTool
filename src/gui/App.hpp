@@ -158,6 +158,7 @@ private:
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> successBrush_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> warningBrush_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> errorBrush_;
+    Microsoft::WRL::ComPtr<ID2D1Bitmap> appIconBitmap_;
     Microsoft::WRL::ComPtr<ID2D1Bitmap> previewBitmap_;
 
     Microsoft::WRL::ComPtr<IDWriteTextFormat> titleFormat_;
