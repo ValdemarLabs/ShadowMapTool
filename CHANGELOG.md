@@ -1,19 +1,19 @@
 # ShadowMapTool Changelog
 
-This changelog records notable ShadowMapTool changes. The initial entries were reconstructed from the Path of the Shaman development changelog and the preserved standalone Git history.
+This changelog records notable ShadowMapTool releases and development changes.
 
-## [Unreleased]
+## [1.3.0] - 1.10.2026
 
-### Repository and documentation
+ShadowMapTool 1.3.0 is the first standalone public release.
 
-- Moved ShadowMapTool from the Path of the Shaman repository to its dedicated public repository while preserving the tool-specific commit history.
+### Release and repository
+
+- Published ShadowMapTool in its dedicated public repository with its tool-specific commit history preserved.
 - Established `main` as the stable branch and `dev` as the integration branch.
 - Added Windows build validation for `main`, `dev`, and pull requests, plus tagged-release automation.
-- Added a curated release packager that includes the GUI, CLI, `CascLib.dll`, README, and third-party notices while excluding build libraries, tests, and generated logs.
-- Moved the technical analysis, application branding, and World Editor comparison maps into the standalone repository.
+- Added a curated release packager that includes the GUI, CLI, `CascLib.dll`, README, changelog, and third-party notices while excluding build libraries, tests, and generated logs.
+- Included the technical analysis, application branding, and World Editor comparison maps in the standalone repository.
 - Added application screenshots and this dedicated changelog, which is also included in curated release packages.
-
-## [1.3.0] - 30.9.2026
 
 ### Added
 
@@ -112,5 +112,4 @@ This changelog records notable ShadowMapTool changes. The initial entries were r
 - Exact cliff-art model faces and World Editor shadow post-processing are not reproduced.
 - World Editor and ShadowMapTool results can therefore differ even when SHD orientation and byte polarity are correct.
 
-[Unreleased]: https://github.com/ValdemarLabs/ShadowMapTool/compare/v1.3.0...dev
 [1.3.0]: https://github.com/ValdemarLabs/ShadowMapTool/tree/v1.3.0
