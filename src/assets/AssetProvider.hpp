@@ -58,6 +58,23 @@ private:
     std::string error_;
 };
 
+class LegacyMpqAssetProvider final : public AssetProvider {
+public:
+    explicit LegacyMpqAssetProvider(const std::filesystem::path& warcraftDirectory);
+    ~LegacyMpqAssetProvider() override;
+    LegacyMpqAssetProvider(const LegacyMpqAssetProvider&) = delete;
+    LegacyMpqAssetProvider& operator=(const LegacyMpqAssetProvider&) = delete;
+
+    [[nodiscard]] std::optional<std::vector<std::byte>> load(
+        std::string_view virtualPath) const override;
+    [[nodiscard]] bool available() const noexcept { return !archives_.empty(); }
+    [[nodiscard]] const std::string& error() const noexcept { return error_; }
+
+private:
+    std::vector<void*> archives_;
+    std::string error_;
+};
+
 class CompositeAssetProvider final : public AssetProvider {
 public:
     void add(std::shared_ptr<const AssetProvider> provider);
@@ -68,5 +85,7 @@ private:
 };
 
 [[nodiscard]] std::string normalizeAssetPath(std::string_view path);
+[[nodiscard]] bool isCascWarcraftDirectory(const std::filesystem::path& path);
+[[nodiscard]] bool isLegacyWarcraftDirectory(const std::filesystem::path& path);
 
 } // namespace w3shadow

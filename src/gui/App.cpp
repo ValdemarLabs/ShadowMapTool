@@ -16,12 +16,15 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <cwctype>
 #include <exception>
+#include <iomanip>
 #include <memory>
 #include <sstream>
 #include <string_view>
@@ -107,6 +110,19 @@ std::wstring widen(const std::string_view value)
     std::wstring result(static_cast<std::size_t>(fallbackSize), L'\0');
     MultiByteToWideChar(codePage, flags, value.data(), static_cast<int>(value.size()),
                         result.data(), fallbackSize);
+    return result;
+}
+
+std::string narrow(const std::wstring_view value)
+{
+    if (value.empty()) return {};
+    const int size = WideCharToMultiByte(CP_UTF8, 0, value.data(),
+                                         static_cast<int>(value.size()),
+                                         nullptr, 0, nullptr, nullptr);
+    if (size <= 0) return {};
+    std::string result(static_cast<std::size_t>(size), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, value.data(), static_cast<int>(value.size()),
+                        result.data(), size, nullptr, nullptr);
     return result;
 }
 
@@ -265,12 +281,22 @@ std::optional<std::filesystem::path> executableDirectory()
 
 bool isWarcraftDirectory(const std::filesystem::path& path)
 {
-    return !path.empty() && std::filesystem::exists(path / L".build.info");
+    return isCascWarcraftDirectory(path) || isLegacyWarcraftDirectory(path);
 }
 
 bool isCascLibrary(const std::filesystem::path& path)
 {
     return !path.empty() && std::filesystem::is_regular_file(path);
+}
+
+bool hasUsableAssetSettings(
+    const std::optional<std::filesystem::path>& warcraftDirectory,
+    const std::optional<std::filesystem::path>& cascLibrary)
+{
+    if (!warcraftDirectory) return false;
+    if (isLegacyWarcraftDirectory(*warcraftDirectory)) return true;
+    return isCascWarcraftDirectory(*warcraftDirectory) && cascLibrary &&
+           isCascLibrary(*cascLibrary);
 }
 
 std::optional<std::filesystem::path> saveFileDialog(
@@ -335,13 +361,30 @@ int App::run(
     std::optional<std::filesystem::path> startupMap,
     const bool smokeTest)
 {
-    if (!initializeFactories() || !createWindow(instance, smokeTest ? SW_HIDE : showCommand)) return 1;
+    initializeSessionLog();
+    logEvent(StatusKind::Neutral, L"ShadowMap Tool 1.3 session started.");
+    if (!initializeFactories()) {
+        logEvent(StatusKind::Error, L"Application startup failed: graphics factories could not be initialized.");
+        return 1;
+    }
+    if (!createWindow(instance, smokeTest ? SW_HIDE : showCommand)) {
+        logEvent(StatusKind::Error, L"Application startup failed: the main window could not be created.");
+        return 1;
+    }
     if (!smokeTest) loadAssetSettings(true);
     if (startupMap) loadMap(*startupMap);
     if (smokeTest) {
         showHelp_ = true;
         updateEditControls();
-        if (!createDeviceResources()) return 2;
+        if (!createDeviceResources()) {
+            logEvent(StatusKind::Error, L"GUI smoke test failed: device resources could not be created.");
+            return 2;
+        }
+        paint();
+        showHelp_ = false;
+        showAbout_ = true;
+        aboutSection_ = 0;
+        updateEditControls();
         paint();
         SetTimer(window_, 1U, 100U, nullptr);
     }
@@ -351,6 +394,7 @@ int App::run(
         TranslateMessage(&message);
         DispatchMessageW(&message);
     }
+    logEvent(StatusKind::Neutral, L"Session ended.");
     return static_cast<int>(message.wParam);
 }
 
@@ -550,8 +594,16 @@ LRESULT App::handleMessage(const UINT message, const WPARAM wParam, const LPARAM
             InvalidateRect(window_, nullptr, FALSE);
             return 0;
         }
+        if (wParam == VK_ESCAPE && showAbout_) {
+            showAbout_ = false;
+            focused_ = Target::About;
+            updateEditControls();
+            InvalidateRect(window_, nullptr, FALSE);
+            return 0;
+        }
         if (wParam == VK_F1) {
             showAssets_ = false;
+            showAbout_ = false;
             showHelp_ = true;
             focused_ = Target::HelpClose;
             updateEditControls();
@@ -799,8 +851,10 @@ App::Layout App::calculateLayout() const
                                   layout.previewCard.right - 168.0F, actionsTop + 40.0F);
     layout.saveMap = D2D1::RectF(layout.previewCard.right - 158.0F, actionsTop,
                                  layout.previewCard.right - 18.0F, actionsTop + 40.0F);
-    layout.testMode = D2D1::RectF(size.width - 326.0F, 29.0F, size.width - 214.0F, 61.0F);
-    layout.assets = D2D1::RectF(size.width - 204.0F, 29.0F, size.width - 112.0F, 61.0F);
+    layout.testMode = D2D1::RectF(size.width - 484.0F, 29.0F, size.width - 372.0F, 61.0F);
+    layout.assets = D2D1::RectF(size.width - 362.0F, 29.0F, size.width - 286.0F, 61.0F);
+    layout.logs = D2D1::RectF(size.width - 276.0F, 29.0F, size.width - 210.0F, 61.0F);
+    layout.about = D2D1::RectF(size.width - 200.0F, 29.0F, size.width - 112.0F, 61.0F);
     layout.help = D2D1::RectF(size.width - 102.0F, 29.0F, size.width - 28.0F, 61.0F);
     const float helpWidth = std::min(760.0F, size.width - 80.0F);
     const float helpHeight = std::min(570.0F, size.height - 80.0F);
@@ -824,6 +878,26 @@ App::Layout App::calculateLayout() const
     layout.assetsClose = D2D1::RectF(
         assetsLeft + assetsWidth - 120.0F, assetsTop + assetsHeight - 60.0F,
         assetsLeft + assetsWidth - 24.0F, assetsTop + assetsHeight - 22.0F);
+    const float aboutWidth = std::min(840.0F, size.width - 80.0F);
+    const float aboutHeight = std::min(610.0F, size.height - 60.0F);
+    const float aboutLeft = (size.width - aboutWidth) / 2.0F;
+    const float aboutTop = (size.height - aboutHeight) / 2.0F;
+    constexpr std::array<float, 4> contentHeights{148.0F, 154.0F, 142.0F, 78.0F};
+    float sectionTop = aboutTop + 76.0F;
+    for (std::size_t index = 0; index < layout.aboutSections.size(); ++index) {
+        layout.aboutSections[index] = D2D1::RectF(
+            aboutLeft + 24.0F, sectionTop, aboutLeft + aboutWidth - 24.0F, sectionTop + 40.0F);
+        sectionTop += 48.0F;
+        if (aboutSection_ == static_cast<int>(index)) {
+            layout.aboutContents[index] = D2D1::RectF(
+                aboutLeft + 34.0F, sectionTop - 2.0F,
+                aboutLeft + aboutWidth - 34.0F, sectionTop + contentHeights[index] - 2.0F);
+            sectionTop += contentHeights[index];
+        }
+    }
+    layout.aboutClose = D2D1::RectF(
+        aboutLeft + aboutWidth - 120.0F, aboutTop + aboutHeight - 58.0F,
+        aboutLeft + aboutWidth - 24.0F, aboutTop + aboutHeight - 20.0F);
     layout.status = D2D1::RectF(margin, size.height - 47.0F, size.width - margin, size.height - 16.0F);
     return layout;
 }
@@ -833,7 +907,7 @@ void App::updateEditControls()
     if (window_ == nullptr) return;
     const auto layout = calculateLayout();
     const float scale = static_cast<float>(dpi_) / 96.0F;
-    const bool visible = !testMode_ && !showHelp_ && !showAssets_;
+    const bool visible = !testMode_ && !showHelp_ && !showAssets_ && !showAbout_;
     for (std::size_t index = 0; index < lightEdits_.size(); ++index) {
         if (lightEdits_[index] == nullptr) continue;
         const auto& rectangle = layout.lightEdits[index];
@@ -851,6 +925,15 @@ App::Target App::hitTest(const float x, const float y) const
 {
     const auto layout = calculateLayout();
     if (showHelp_) return contains(layout.helpClose, x, y) ? Target::HelpClose : Target::None;
+    if (showAbout_) {
+        for (std::size_t index = 0; index < layout.aboutSections.size(); ++index) {
+            if (contains(layout.aboutSections[index], x, y)) {
+                return static_cast<Target>(
+                    static_cast<int>(Target::AboutPurpose) + static_cast<int>(index));
+            }
+        }
+        return contains(layout.aboutClose, x, y) ? Target::AboutClose : Target::None;
+    }
     if (showAssets_) {
         if (contains(layout.assetsWarcraftBrowse, x, y)) return Target::AssetsWarcraftBrowse;
         if (contains(layout.assetsCascBrowse, x, y)) return Target::AssetsCascBrowse;
@@ -859,6 +942,8 @@ App::Target App::hitTest(const float x, const float y) const
         return Target::None;
     }
     if (contains(layout.help, x, y)) return Target::Help;
+    if (contains(layout.about, x, y)) return Target::About;
+    if (contains(layout.logs, x, y)) return Target::Logs;
     if (contains(layout.assets, x, y)) return Target::Assets;
     if (contains(layout.testMode, x, y)) return Target::TestMode;
     if (contains(layout.browse, x, y)) return Target::Browse;
@@ -914,6 +999,19 @@ void App::moveFocus(const bool backwards)
     }
     if (showHelp_) {
         focused_ = Target::HelpClose;
+        InvalidateRect(window_, nullptr, FALSE);
+        return;
+    }
+    if (showAbout_) {
+        constexpr std::array<Target, 5> targets{
+            Target::AboutPurpose, Target::AboutOrigin, Target::AboutCompatibility,
+            Target::AboutCredits, Target::AboutClose};
+        auto iterator = std::find(targets.begin(), targets.end(), focused_);
+        std::size_t index = iterator == targets.end()
+            ? 0U : static_cast<std::size_t>(iterator - targets.begin());
+        index = backwards ? (index == 0U ? targets.size() - 1U : index - 1U)
+                          : (index + 1U) % targets.size();
+        focused_ = targets[index];
         InvalidateRect(window_, nullptr, FALSE);
         return;
     }
@@ -1004,14 +1102,39 @@ void App::activate(const Target target)
         break;
     case Target::Assets:
         showHelp_ = false;
+        showAbout_ = false;
         showAssets_ = true;
         focused_ = Target::AssetsWarcraftBrowse;
         updateEditControls();
         break;
+    case Target::Logs:
+        openLogsFolder();
+        break;
+    case Target::About:
+        showAssets_ = false;
+        showHelp_ = false;
+        showAbout_ = true;
+        focused_ = Target::AboutPurpose;
+        updateEditControls();
+        break;
     case Target::Help:
         showAssets_ = false;
+        showAbout_ = false;
         showHelp_ = true;
         focused_ = Target::HelpClose;
+        updateEditControls();
+        break;
+    case Target::AboutPurpose:
+    case Target::AboutOrigin:
+    case Target::AboutCompatibility:
+    case Target::AboutCredits: {
+        const int selected = static_cast<int>(target) - static_cast<int>(Target::AboutPurpose);
+        aboutSection_ = aboutSection_ == selected ? -1 : selected;
+        break;
+    }
+    case Target::AboutClose:
+        showAbout_ = false;
+        focused_ = Target::About;
         updateEditControls();
         break;
     case Target::AssetsWarcraftBrowse: chooseWarcraftDirectory(); break;
@@ -1049,20 +1172,27 @@ void App::loadAssetSettings(const bool persistDetected)
     warcraftDirectory_ =
         readRegistryPath(HKEY_CURRENT_USER, SettingsRegistryKey, L"WarcraftDirectory");
     cascLibrary_ = readRegistryPath(HKEY_CURRENT_USER, SettingsRegistryKey, L"CascLibPath");
-    if (!warcraftDirectory_ || !cascLibrary_) {
+    if (!hasUsableAssetSettings(warcraftDirectory_, cascLibrary_)) {
         const auto storedWarcraft = warcraftDirectory_;
         const auto storedCasc = cascLibrary_;
         autoDetectAssetSettings(false);
-        if (storedWarcraft) warcraftDirectory_ = storedWarcraft;
-        if (storedCasc) cascLibrary_ = storedCasc;
+        if (storedWarcraft && isWarcraftDirectory(*storedWarcraft)) {
+            warcraftDirectory_ = storedWarcraft;
+        }
+        if (storedCasc && isCascLibrary(*storedCasc)) cascLibrary_ = storedCasc;
         if (persistDetected) saveAssetSettings();
     }
-    if (!warcraftDirectory_ || !cascLibrary_) {
+    if (!hasUsableAssetSettings(warcraftDirectory_, cascLibrary_)) {
         showAssets_ = true;
         focused_ = Target::AssetsWarcraftBrowse;
         updateEditControls();
-        setStatus(L"Set the Warcraft III and CascLib locations to calculate object shadows.",
+        setStatus(L"Set a Warcraft III CASC or classic MPQ location for object shadows.",
                   StatusKind::Warning);
+    } else if (warcraftDirectory_) {
+        logEvent(StatusKind::Success,
+                 (isLegacyWarcraftDirectory(*warcraftDirectory_)
+                      ? L"Using classic MPQ assets: " : L"Using CASC assets: ") +
+                     warcraftDirectory_->wstring());
     }
 }
 
@@ -1124,8 +1254,11 @@ void App::autoDetectAssetSettings(const bool notify)
     }
     saveAssetSettings();
     if (notify) {
-        if (warcraftDirectory_ && cascLibrary_) {
-            setStatus(L"Warcraft III and CascLib locations detected and saved.",
+        if (warcraftDirectory_ && isLegacyWarcraftDirectory(*warcraftDirectory_)) {
+            setStatus(L"Classic Warcraft III MPQ installation detected and saved.",
+                      StatusKind::Success);
+        } else if (hasUsableAssetSettings(warcraftDirectory_, cascLibrary_)) {
+            setStatus(L"Warcraft III CASC and CascLib locations detected and saved.",
                       StatusKind::Success);
         } else {
             setStatus(L"Auto-detection was incomplete. Choose the missing asset locations.",
@@ -1141,11 +1274,15 @@ void App::chooseWarcraftDirectory()
         const auto selected = chooseFolderDialog(window_, L"Choose the Warcraft III folder");
         if (!selected) return;
         if (!isWarcraftDirectory(*selected)) {
-            throw std::runtime_error("the selected folder does not contain .build.info");
+            throw std::runtime_error(
+                "the selected folder contains neither CASC .build.info nor classic War3.mpq");
         }
         warcraftDirectory_ = *selected;
         saveAssetSettings();
-        setStatus(L"Warcraft III location saved.", StatusKind::Success);
+        setStatus(isLegacyWarcraftDirectory(*selected)
+                      ? L"Classic Warcraft III MPQ location saved; CascLib is not required."
+                      : L"Warcraft III CASC location saved.",
+                  StatusKind::Success);
     } catch (const std::exception& error) {
         showError(L"Set Warcraft III location", error);
     }
@@ -1177,6 +1314,7 @@ void App::loadMap(const std::filesystem::path& path)
         mapPath_ = path;
         mapInfo_ = parsed.info;
         rebuildPreview();
+        logEvent(StatusKind::Neutral, L"Loaded map: " + path.wstring());
 
         const auto expected = static_cast<std::uint64_t>(parsed.info.tileWidth) *
                               parsed.info.tileHeight * 16U;
@@ -1333,20 +1471,31 @@ void App::calculateShadows()
         CompositeAssetProvider assets;
         assets.add(std::make_shared<MapAssetProvider>(source));
         std::shared_ptr<CascAssetProvider> casc;
+        std::shared_ptr<LegacyMpqAssetProvider> legacy;
         if (includeDoodads_ || includeDestructibles_) {
-            if (!warcraftDirectory_ || !isWarcraftDirectory(*warcraftDirectory_) ||
-                !cascLibrary_ || !isCascLibrary(*cascLibrary_)) {
+            if (!hasUsableAssetSettings(warcraftDirectory_, cascLibrary_)) {
                 showAssets_ = true;
                 focused_ = Target::AssetsWarcraftBrowse;
                 updateEditControls();
                 throw std::runtime_error(
-                    "set valid Warcraft III and CascLib locations in Assets");
+                    "set a valid Warcraft III CASC or classic MPQ location in Assets");
             }
-            casc = std::make_shared<CascAssetProvider>(*warcraftDirectory_, *cascLibrary_);
-            if (!casc->available()) {
-                throw std::runtime_error(casc->error() + "; update the paths in Assets");
+            if (isLegacyWarcraftDirectory(*warcraftDirectory_)) {
+                legacy = std::make_shared<LegacyMpqAssetProvider>(*warcraftDirectory_);
+                if (!legacy->available()) {
+                    throw std::runtime_error(legacy->error() + "; update the path in Assets");
+                }
+                assets.add(legacy);
+                logEvent(StatusKind::Neutral,
+                         L"Calculation asset source: classic MPQ installation.");
+            } else {
+                casc = std::make_shared<CascAssetProvider>(*warcraftDirectory_, *cascLibrary_);
+                if (!casc->available()) {
+                    throw std::runtime_error(casc->error() + "; update the paths in Assets");
+                }
+                assets.add(casc);
+                logEvent(StatusKind::Neutral, L"Calculation asset source: CASC installation.");
             }
-            assets.add(casc);
         }
         GenerationOptions options;
         options.lightDirection = readLightDirection();
@@ -1357,6 +1506,28 @@ void App::calculateShadows()
         options.destructibles = includeDestructibles_;
         options.honorIgnoreShadowRegions = honorIgnoreRegions_;
         auto generated = generateShadowMap(source, assets, options);
+        for (const auto& warning : generated.warnings) {
+            logEvent(StatusKind::Warning, widen(warning));
+        }
+        std::wostringstream calculationLog;
+        calculationLog << L"Calculation completed: map=" << mapPath_->wstring()
+                       << L", terrain=" << (includeTerrain_ ? L"on" : L"off")
+                       << L", doodads=" << (includeDoodads_ ? L"on" : L"off")
+                       << L", destructibles=" << (includeDestructibles_ ? L"on" : L"off")
+                       << L", geometry="
+                       << (terrainGeometry_ == TerrainGeometryMode::SmoothSubTile
+                               ? L"smooth-sub-tile" : L"classic-triangles")
+                       << L", samples=" << generated.stats.shadowSampleGrid << L"x"
+                       << L", placements=" << generated.stats.placements
+                       << L", resolved=" << generated.stats.resolvedPlacements
+                       << L", unresolved=" << generated.stats.unresolvedPlacements
+                       << L", models=" << generated.stats.uniqueModels
+                       << L", triangles=" << generated.stats.triangles
+                       << L", rays=" << generated.stats.rays
+                       << L", seconds=" << std::fixed << std::setprecision(3)
+                       << (generated.stats.loadSeconds + generated.stats.bvhSeconds +
+                           generated.stats.raySeconds);
+        logEvent(StatusKind::Success, calculationLog.str());
         shadowMap_ = std::move(generated.shadow);
         previewKind_ = PreviewKind::Calculated;
         calculationDirty_ = false;
@@ -1417,8 +1588,78 @@ void App::saveShadowMap()
     }
 }
 
+void App::initializeSessionLog()
+{
+    const auto now = std::chrono::system_clock::now();
+    const auto time = std::chrono::system_clock::to_time_t(now);
+    std::tm local{};
+    localtime_s(&local, &time);
+    std::ostringstream name;
+    name << "shadowmaptool-" << std::put_time(&local, "%Y%m%d-%H%M%S")
+         << '-' << GetCurrentProcessId() << ".log";
+
+    std::vector<std::filesystem::path> candidates;
+    if (const auto executable = executableDirectory()) {
+        candidates.push_back(*executable / L"logs");
+    }
+    std::array<wchar_t, 32768> localAppData{};
+    const auto length = GetEnvironmentVariableW(
+        L"LOCALAPPDATA", localAppData.data(), static_cast<DWORD>(localAppData.size()));
+    if (length > 0U && length < localAppData.size()) {
+        candidates.emplace_back(
+            std::filesystem::path(localAppData.data()) / L"ShadowMapTool" / L"logs");
+    }
+
+    for (const auto& directory : candidates) {
+        std::error_code error;
+        std::filesystem::create_directories(directory, error);
+        if (error) continue;
+        const auto path = directory / name.str();
+        std::ofstream stream(path, std::ios::out | std::ios::app);
+        if (!stream) continue;
+        logsDirectory_ = directory;
+        sessionLogPath_ = path;
+        sessionLog_ = std::move(stream);
+        break;
+    }
+}
+
+void App::logEvent(const StatusKind kind, const std::wstring_view message)
+{
+    if (!sessionLog_) return;
+    const auto now = std::chrono::system_clock::now();
+    const auto time = std::chrono::system_clock::to_time_t(now);
+    std::tm local{};
+    localtime_s(&local, &time);
+    const char* level = "INFO";
+    if (kind == StatusKind::Success) level = "SUCCESS";
+    if (kind == StatusKind::Warning) level = "WARNING";
+    if (kind == StatusKind::Error) level = "ERROR";
+    sessionLog_ << std::put_time(&local, "%Y-%m-%d %H:%M:%S")
+                << " [" << level << "] " << narrow(message) << '\n';
+    sessionLog_.flush();
+}
+
+void App::openLogsFolder()
+{
+    if (logsDirectory_.empty() || !std::filesystem::is_directory(logsDirectory_)) {
+        const std::runtime_error error("the session log directory could not be created");
+        showError(L"Open logs", error);
+        return;
+    }
+    const auto result = reinterpret_cast<INT_PTR>(
+        ShellExecuteW(window_, L"open", logsDirectory_.c_str(), nullptr, nullptr, SW_SHOWNORMAL));
+    if (result <= 32) {
+        const std::runtime_error error("Windows could not open the logs directory");
+        showError(L"Open logs", error);
+        return;
+    }
+    setStatus(L"Opened logs folder: " + logsDirectory_.wstring(), StatusKind::Success);
+}
+
 void App::setStatus(std::wstring message, const StatusKind kind)
 {
+    logEvent(kind, message);
     status_ = std::move(message);
     statusKind_ = kind;
     InvalidateRect(window_, nullptr, FALSE);
@@ -1506,6 +1747,8 @@ void App::paint()
     drawButton(layout.testMode, testMode_ ? L"Test mode ON" : L"Test mode",
                Target::TestMode, testMode_);
     drawButton(layout.assets, L"Assets", Target::Assets, false);
+    drawButton(layout.logs, L"Logs", Target::Logs, false);
+    drawButton(layout.about, L"About", Target::About, false);
     drawButton(layout.help, L"?  Help", Target::Help, false);
 
     drawCard(layout.mapCard);
@@ -1675,7 +1918,7 @@ void App::paint()
                  titleFormat_.Get(), textBrush_.Get());
         drawText(
             L"Locations are auto-detected on first start and saved for your Windows user. "
-            L"Use Browse to choose another Warcraft III installation or CascLib.dll.",
+            L"Choose a current CASC installation or a classic MPQ installation such as 1.27b.",
             D2D1::RectF(assetsLeft + 25.0F, assetsTop + 59.0F,
                         assetsCard.right - 25.0F, assetsTop + 103.0F),
             helpBodyFormat_.Get(), mutedBrush_.Get());
@@ -1692,26 +1935,104 @@ void App::paint()
                      ? successBrush_.Get() : warningBrush_.Get());
         drawButton(layout.assetsWarcraftBrowse, L"Browse", Target::AssetsWarcraftBrowse, false);
 
-        drawText(L"CascLib library",
+        const bool legacyAssets =
+            warcraftDirectory_ && isLegacyWarcraftDirectory(*warcraftDirectory_);
+        drawText(L"CascLib library (CASC installations only)",
                  D2D1::RectF(assetsLeft + 24.0F, assetsTop + 204.0F,
                              assetsCard.right - 150.0F, assetsTop + 228.0F),
                  headingFormat_.Get(), textBrush_.Get());
-        drawText(cascLibrary_ ? cascLibrary_->wstring() : L"Not set",
+        drawText(legacyAssets
+                     ? L"Not required — classic Warcraft MPQ archives detected"
+                     : (cascLibrary_ ? cascLibrary_->wstring() : L"Not set"),
                  D2D1::RectF(assetsLeft + 24.0F, assetsTop + 232.0F,
                              assetsCard.right - 150.0F, assetsTop + 260.0F),
                  smallFormat_.Get(),
-                 cascLibrary_ && isCascLibrary(*cascLibrary_)
+                 legacyAssets || (cascLibrary_ && isCascLibrary(*cascLibrary_))
                      ? successBrush_.Get() : warningBrush_.Get());
         drawButton(layout.assetsCascBrowse, L"Browse", Target::AssetsCascBrowse, false);
 
         drawText(
             L"Map-imported models remain first priority. Installed Warcraft assets are needed "
-            L"for stock doodad and destructible shadows.",
+            L"for stock object shadows. Classic MPQs are read in patch/local/expansion/base order.",
             D2D1::RectF(assetsLeft + 24.0F, assetsTop + 282.0F,
                         assetsCard.right - 24.0F, assetsTop + 326.0F),
             helpBodyFormat_.Get(), mutedBrush_.Get());
         drawButton(layout.assetsAutoDetect, L"Auto-detect", Target::AssetsAutoDetect, false);
         drawButton(layout.assetsClose, L"Close", Target::AssetsClose, false, true);
+    }
+
+    if (showAbout_) {
+        backgroundBrush_->SetOpacity(0.86F);
+        renderTarget_->FillRectangle(D2D1::RectF(0.0F, 0.0F, size.width, size.height),
+                                     backgroundBrush_.Get());
+        backgroundBrush_->SetOpacity(1.0F);
+
+        const auto aboutCard = D2D1::RectF(
+            layout.aboutSections[0].left - 24.0F,
+            layout.aboutSections[0].top - 76.0F,
+            layout.aboutSections[0].right + 24.0F,
+            layout.aboutClose.bottom + 20.0F);
+        drawCard(aboutCard);
+        drawText(L"About ShadowMap Tool",
+                 D2D1::RectF(aboutCard.left + 24.0F, aboutCard.top + 18.0F,
+                             aboutCard.right - 150.0F, aboutCard.top + 54.0F),
+                 titleFormat_.Get(), textBrush_.Get());
+        drawText(L"Version 1.3 · expand a section to read more",
+                 D2D1::RectF(aboutCard.left + 25.0F, aboutCard.top + 52.0F,
+                             aboutCard.right - 24.0F, aboutCard.top + 73.0F),
+                 smallFormat_.Get(), mutedBrush_.Get());
+
+        constexpr std::array<std::wstring_view, 4> labels{
+            L"Description and purpose", L"Why this tool was created",
+            L"Compatibility and limitations", L"Credits"};
+        constexpr std::array<Target, 4> targets{
+            Target::AboutPurpose, Target::AboutOrigin,
+            Target::AboutCompatibility, Target::AboutCredits};
+        for (std::size_t index = 0; index < labels.size(); ++index) {
+            const bool expanded = aboutSection_ == static_cast<int>(index);
+            drawButton(layout.aboutSections[index],
+                       (expanded ? L"▼  " : L"▶  ") + std::wstring(labels[index]),
+                       targets[index], expanded);
+        }
+
+        if (aboutSection_ == 0) {
+            drawText(
+                L"ShadowMap Tool calculates, previews, exports, and safely writes Warcraft III "
+                L"static war3map.shd data. It reconstructs terrain plus shadow-enabled doodad "
+                L"and destructible geometry, then ray casts a configurable light vector. It "
+                L"offers classic or smoother terrain, 1x/2x/4x edge sampling, IgnoreShadow "
+                L"regions, source filters, safe copies, and backups. The result remains Warcraft's "
+                L"fixed binary four-cells-per-tile shadowmap rather than a higher-resolution texture. "
+                L"Known limits include opaque bind-pose model geometry, no automatic alpha-tile "
+                L"exclusion, and no reconstruction of Warcraft's decorative cliff-art faces.",
+                layout.aboutContents[0], helpBodyFormat_.Get(), textBrush_.Get());
+        } else if (aboutSection_ == 1) {
+            drawText(
+                L"The tool was created because Oger-Lord's old Shadow Calculator has not worked "
+                L"for many years, although map authors still urgently need this workflow. Path of "
+                L"the Shaman is a 480 × 480 map with more than 60,000 doodads; World Editor's "
+                L"native Calculate Shadows and Save Map was too inefficient and slow, and often "
+                L"ended by crashing the editor. Temporarily removing doodads and destructibles "
+                L"before calculation can work, but it is an amusing and fragile workaround. This "
+                L"project provides a practical, repeatable, preview-first replacement.",
+                layout.aboutContents[1], helpBodyFormat_.Get(), textBrush_.Get());
+        } else if (aboutSection_ == 2) {
+            drawText(
+                L"Intended target: current Warcraft III 3.0, with direct classic MPQ asset support "
+                L"validated against patch 1.27b. Older W3E v11, DOO v7/v8, W3R v5, object-data "
+                L"v1–v3, and classic MDX 800 inputs are supported. CASC installs require CascLib; "
+                L"classic MPQ installs do not. The input map must already run on the target client: "
+                L"the tool does not down-convert modern scripts, formats, or assets. Workarounds "
+                L"include terrain-only mode, map-imported models, or CLI --asset-dir with extracted assets.",
+                layout.aboutContents[2], helpBodyFormat_.Get(), textBrush_.Get());
+        } else if (aboutSection_ == 3) {
+            drawText(
+                L"Inspired by Zwiebelchen's upload “Shadowmap Calculator”, created by Oger-Lord "
+                L"as “Shadow Calculator”. ShadowMap Tool is an independent modern reimplementation. "
+                L"Archive access uses StormLib and CascLib by Ladislav Zezula.",
+                layout.aboutContents[3], helpBodyFormat_.Get(), textBrush_.Get());
+        }
+        drawButton(layout.aboutClose, L"Close", Target::AboutClose, false, true);
     }
 
     if (showHelp_) {
@@ -1760,8 +2081,8 @@ void App::paint()
             L"• Alpha terrain tiles should not receive static shadow. Automatic alpha-BLP "
             L"detection is not yet available: temporarily replace the alpha tile, calculate, "
             L"then restore it, or cover it with an IgnoreShadow region.\n"
-            L"• Open Assets to set or auto-detect the Warcraft III installation and CascLib.dll "
-            L"used to resolve installed stock models.",
+            L"• Open Assets to select a current CASC installation plus CascLib.dll, or a classic "
+            L"MPQ installation such as 1.27b, used to resolve installed stock models.",
             D2D1::RectF(helpLeft + 28.0F, helpTop + 240.0F,
                         helpCard.right - 28.0F, helpTop + 370.0F),
             helpBodyFormat_.Get(), textBrush_.Get());

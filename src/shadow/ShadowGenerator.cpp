@@ -141,8 +141,8 @@ GenerationResult generateShadowMap(
         result.stats.uniqueModels = modelCache.size();
         if (result.stats.resolvedPlacements == 0U && result.stats.unresolvedPlacements > 0U) {
             throw std::runtime_error(
-                "no placed-object models could be resolved; verify that CascLib.dll is beside the "
-                "executable and Warcraft III is installed, pass --war3-dir/--casc-lib, or provide "
+                "no placed-object models could be resolved; verify the selected Warcraft III "
+                "CASC or classic MPQ installation, pass --war3-dir/--casc-lib, or provide "
                 "extracted assets with --asset-dir");
         }
     }

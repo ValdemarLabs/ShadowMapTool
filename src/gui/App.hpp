@@ -11,6 +11,7 @@
 
 #include <array>
 #include <filesystem>
+#include <fstream>
 #include <optional>
 #include <string>
 
@@ -54,11 +55,18 @@ private:
         SaveMap,
         TestMode,
         Assets,
+        Logs,
+        About,
         Help,
         AssetsWarcraftBrowse,
         AssetsCascBrowse,
         AssetsAutoDetect,
         AssetsClose,
+        AboutPurpose,
+        AboutOrigin,
+        AboutCompatibility,
+        AboutCredits,
+        AboutClose,
         HelpClose,
         Count
     };
@@ -82,11 +90,16 @@ private:
         D2D1_RECT_F saveMap{};
         D2D1_RECT_F testMode{};
         D2D1_RECT_F assets{};
+        D2D1_RECT_F logs{};
+        D2D1_RECT_F about{};
         D2D1_RECT_F help{};
         D2D1_RECT_F assetsWarcraftBrowse{};
         D2D1_RECT_F assetsCascBrowse{};
         D2D1_RECT_F assetsAutoDetect{};
         D2D1_RECT_F assetsClose{};
+        std::array<D2D1_RECT_F, 4> aboutSections{};
+        std::array<D2D1_RECT_F, 4> aboutContents{};
+        D2D1_RECT_F aboutClose{};
         D2D1_RECT_F helpClose{};
         D2D1_RECT_F status{};
     };
@@ -123,6 +136,9 @@ private:
     void autoDetectAssetSettings(bool notify);
     void chooseWarcraftDirectory();
     void chooseCascLibrary();
+    void initializeSessionLog();
+    void logEvent(StatusKind kind, std::wstring_view message);
+    void openLogsFolder();
     [[nodiscard]] Vec3 readLightDirection() const;
 
     void setStatus(std::wstring message, StatusKind kind);
@@ -179,6 +195,8 @@ private:
     OutputMode outputMode_ = OutputMode::Copy;
     bool showHelp_ = false;
     bool showAssets_ = false;
+    bool showAbout_ = false;
+    int aboutSection_ = 0;
     bool testMode_ = false;
     bool includeTerrain_ = true;
     bool includeDoodads_ = true;
@@ -189,6 +207,9 @@ private:
     bool calculationDirty_ = false;
     std::optional<std::filesystem::path> warcraftDirectory_;
     std::optional<std::filesystem::path> cascLibrary_;
+    std::filesystem::path logsDirectory_;
+    std::filesystem::path sessionLogPath_;
+    std::ofstream sessionLog_;
     PreviewKind previewKind_ = PreviewKind::Empty;
     std::wstring status_ = L"Choose a Warcraft III map to begin.";
     StatusKind statusKind_ = StatusKind::Neutral;

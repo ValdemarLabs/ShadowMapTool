@@ -67,7 +67,7 @@ struct Options {
 void printHelp()
 {
     std::cout <<
-        "w3shadow 1.2.0 - Warcraft III static shadow-map generator\n\n"
+        "w3shadow 1.3.0 - Warcraft III static shadow-map generator\n\n"
         "Commands:\n"
         "  generate MAP [--output MAP | --in-place] [--war3-dir DIR] [--asset-dir DIR]\n"
         "               [--light-x N --light-y N --light-z N] [--threads N]\n"
@@ -81,7 +81,8 @@ void printHelp()
         "  inspect-shadow SHD --map-width W --map-height H [--png FILE] [--force]\n"
         "  replace-shd MAP SHD [--output MAP | --in-place] [--force]\n\n"
         "replace-shd defaults to <name>.shadowed.<extension>; --in-place keeps a backup.\n"
-        "Patterns: black, white, checker, x-gradient, y-gradient, quadrants\n";
+        "Patterns: black, white, checker, x-gradient, y-gradient, quadrants\n"
+        "--war3-dir accepts current CASC installs or classic MPQ installs through 1.27b.\n";
 }
 
 float parseFiniteFloat(const std::string_view text, const std::string_view option)
@@ -181,7 +182,9 @@ std::optional<std::filesystem::path> detectedWarcraftDirectory()
     const std::array<std::filesystem::path, 2> candidates{
         L"C:\\Program Files (x86)\\Warcraft III", L"C:\\Program Files\\Warcraft III"};
     for (const auto& candidate : candidates) {
-        if (std::filesystem::exists(candidate / L".build.info")) return candidate;
+        if (isCascWarcraftDirectory(candidate) || isLegacyWarcraftDirectory(candidate)) {
+            return candidate;
+        }
     }
 #endif
     return std::nullopt;
@@ -419,10 +422,19 @@ int commandGenerate(const int argc, char* argv[])
     if (options.assetDirectory) assets.add(std::make_shared<DirectoryAssetProvider>(*options.assetDirectory));
     const auto warcraftDirectory = options.warcraftDirectory ? options.warcraftDirectory : detectedWarcraftDirectory();
     std::shared_ptr<CascAssetProvider> casc;
+    std::shared_ptr<LegacyMpqAssetProvider> legacy;
     if (warcraftDirectory && (options.doodads || options.destructibles)) {
-        casc = std::make_shared<CascAssetProvider>(*warcraftDirectory, options.cascLibrary);
-        if (casc->available()) assets.add(casc);
-        else std::cerr << "WARN: " << casc->error() << '\n';
+        if (isCascWarcraftDirectory(*warcraftDirectory)) {
+            casc = std::make_shared<CascAssetProvider>(*warcraftDirectory, options.cascLibrary);
+            if (casc->available()) assets.add(casc);
+            else std::cerr << "WARN: " << casc->error() << '\n';
+        } else if (isLegacyWarcraftDirectory(*warcraftDirectory)) {
+            legacy = std::make_shared<LegacyMpqAssetProvider>(*warcraftDirectory);
+            if (legacy->available()) assets.add(legacy);
+            else std::cerr << "WARN: " << legacy->error() << '\n';
+        } else {
+            std::cerr << "WARN: Warcraft directory contains neither CASC .build.info nor War3.mpq\n";
+        }
     }
 
     GenerationOptions generation;

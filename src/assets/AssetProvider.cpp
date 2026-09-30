@@ -2,9 +2,12 @@
 
 #include "util/FileIO.hpp"
 
+#include <StormLib.h>
+
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstdint>
 #include <limits>
 #include <stdexcept>
 
@@ -13,6 +16,16 @@
 #endif
 
 namespace w3shadow {
+
+bool isCascWarcraftDirectory(const std::filesystem::path& path)
+{
+    return !path.empty() && std::filesystem::is_regular_file(path / ".build.info");
+}
+
+bool isLegacyWarcraftDirectory(const std::filesystem::path& path)
+{
+    return !path.empty() && std::filesystem::is_regular_file(path / "War3.mpq");
+}
 
 std::string normalizeAssetPath(const std::string_view path)
 {
@@ -153,6 +166,70 @@ std::optional<std::vector<std::byte>> CascAssetProvider::load(
 #else
     static_cast<void>(virtualPath);
 #endif
+    return std::nullopt;
+}
+
+LegacyMpqAssetProvider::LegacyMpqAssetProvider(
+    const std::filesystem::path& warcraftDirectory)
+{
+    // Highest-priority archives are searched first, matching the classic client.
+    constexpr std::array<const char*, 5> names{
+        "War3Patch.mpq", "War3xLocal.mpq", "War3Local.mpq", "War3x.mpq", "War3.mpq"};
+    for (const auto* name : names) {
+        const auto path = warcraftDirectory / name;
+        if (!std::filesystem::is_regular_file(path)) continue;
+        HANDLE archive = nullptr;
+        if (SFileOpenArchive(path.c_str(), 0, MPQ_OPEN_READ_ONLY, &archive)) {
+            archives_.push_back(archive);
+        }
+    }
+    if (archives_.empty()) {
+        error_ = "no classic Warcraft III MPQ archives could be opened at " +
+                 warcraftDirectory.string();
+    }
+}
+
+LegacyMpqAssetProvider::~LegacyMpqAssetProvider()
+{
+    for (void* archive : archives_) {
+        if (archive != nullptr) SFileCloseArchive(archive);
+    }
+}
+
+std::optional<std::vector<std::byte>> LegacyMpqAssetProvider::load(
+    const std::string_view virtualPath) const
+{
+    const auto path = normalizeAssetPath(virtualPath);
+    if (path.empty()) return std::nullopt;
+    for (void* archive : archives_) {
+        HANDLE file = nullptr;
+        if (!SFileOpenFileEx(archive, path.c_str(), SFILE_OPEN_FROM_MPQ, &file)) continue;
+        DWORD highSize = 0;
+        const DWORD lowSize = SFileGetFileSize(file, &highSize);
+        const auto size = (static_cast<std::uint64_t>(highSize) << 32U) | lowSize;
+        if ((lowSize == SFILE_INVALID_SIZE && highSize == 0U) ||
+            size > 1024ULL * 1024ULL * 1024ULL ||
+            size > (std::numeric_limits<std::size_t>::max)()) {
+            SFileCloseFile(file);
+            continue;
+        }
+        std::vector<std::byte> result(static_cast<std::size_t>(size));
+        std::size_t offset = 0;
+        bool success = true;
+        while (offset < result.size()) {
+            const auto count = static_cast<DWORD>(std::min<std::size_t>(
+                result.size() - offset, 16U * 1024U * 1024U));
+            DWORD received = 0;
+            if (!SFileReadFile(file, result.data() + offset, count, &received, nullptr) ||
+                received != count) {
+                success = false;
+                break;
+            }
+            offset += received;
+        }
+        SFileCloseFile(file);
+        if (success) return result;
+    }
     return std::nullopt;
 }
 

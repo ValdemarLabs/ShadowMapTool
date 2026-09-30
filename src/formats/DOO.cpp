@@ -40,16 +40,25 @@ DOOParseResult parseImpl(const std::span<const std::byte> bytes)
         if (result.version >= 13U) placement.groupId = reader.readI32("group ID");
         placement.flags = reader.readU8("flags");
         placement.life = reader.readU8("life percentage");
-        static_cast<void>(reader.readI32("item table pointer"));
-        const auto setCount = reader.readU32("item set count");
-        if (setCount > 100000U) throw std::runtime_error("DOO parse error: item set count exceeds safety limit");
-        for (std::uint32_t set = 0; set < setCount; ++set) {
-            const auto itemCount = reader.readU32("item count");
-            if (itemCount > 1000000U ||
-                static_cast<std::uint64_t>(itemCount) * 8U > reader.remaining()) {
-                throw std::runtime_error("DOO parse error: invalid dropped-item count");
+        if (result.version >= 8U) {
+            const auto itemTablePointer = reader.readI32("item table pointer");
+            const auto setCount = reader.readU32("item set count");
+            if (setCount > 100000U) {
+                throw std::runtime_error(
+                    "DOO parse error: doodad " + std::to_string(index) +
+                    " item set count " + std::to_string(setCount) +
+                    " exceeds safety limit after item-table pointer " +
+                    std::to_string(itemTablePointer) + " at offset " +
+                    std::to_string(reader.offset()));
             }
-            reader.skip(static_cast<std::size_t>(itemCount) * 8U, "dropped items");
+            for (std::uint32_t set = 0; set < setCount; ++set) {
+                const auto itemCount = reader.readU32("item count");
+                if (itemCount > 1000000U ||
+                    static_cast<std::uint64_t>(itemCount) * 8U > reader.remaining()) {
+                    throw std::runtime_error("DOO parse error: invalid dropped-item count");
+                }
+                reader.skip(static_cast<std::size_t>(itemCount) * 8U, "dropped items");
+            }
         }
         if (result.version >= 13U) placement.color = reader.readU32("vertex color");
         placement.editorId = reader.readU32("editor ID");

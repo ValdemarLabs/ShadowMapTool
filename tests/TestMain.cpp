@@ -163,6 +163,22 @@ void testGeometryAndFormats()
     require(!bvh.intersects({5.0F, 5.0F, 0.0F}, {0.0F, 0.0F, 1.0F}),
             "BVH reported a false intersection");
 
+    std::vector<std::byte> doo7;
+    appendTag(doo7, "W3do"); appendU32(doo7, 7U); appendU32(doo7, 9U); appendU32(doo7, 2U);
+    for (const auto& rawcode : {"LOsm", "LTlt"}) {
+        appendTag(doo7, rawcode); appendU32(doo7, 0U);
+        appendF32(doo7, 128.0F); appendF32(doo7, -64.0F); appendF32(doo7, 16.0F);
+        appendF32(doo7, 0.5F); appendF32(doo7, 1.0F); appendF32(doo7, 1.0F); appendF32(doo7, 1.0F);
+        doo7.push_back(std::byte{0}); doo7.push_back(std::byte{100});
+        appendU32(doo7, rawcode[0] == 'L' && rawcode[1] == 'O' ? 11U : 12U);
+    }
+    const auto parsedDoo7 = w3shadow::parseDOO(doo7);
+    require(static_cast<bool>(parsedDoo7), parsedDoo7.error);
+    require(parsedDoo7.version == 7U && parsedDoo7.placements.size() == 2U &&
+            parsedDoo7.placements[0].editorId == 11U &&
+            parsedDoo7.placements[1].editorId == 12U,
+            "DOO v7 compact placement records were not decoded");
+
     std::vector<std::byte> doo;
     appendTag(doo, "W3do"); appendU32(doo, 8U); appendU32(doo, 11U); appendU32(doo, 1U);
     appendTag(doo, "LTlt"); appendU32(doo, 2U);
@@ -359,6 +375,57 @@ void testInstalledWarcraftAssets()
 #endif
 }
 
+void testLegacyWarcraftAssets()
+{
+#ifdef _WIN32
+    const std::filesystem::path directory(L"F:\\Pelit\\Warcraft III 1.27b");
+    if (!w3shadow::isLegacyWarcraftDirectory(directory)) return;
+
+    const w3shadow::LegacyMpqAssetProvider assets(directory);
+    require(assets.available(), assets.error());
+    require(assets.load("Doodads\\Doodads.slk").has_value(),
+            "legacy MPQ could not load Doodads\\Doodads.slk");
+    require(assets.load("Units\\DestructableData.slk").has_value(),
+            "legacy MPQ could not load Units\\DestructableData.slk");
+
+    w3shadow::ObjectDatabase objects;
+    objects.loadStock(assets);
+    const auto* stockTree = objects.find("LTlt");
+    require(stockTree != nullptr, "legacy MPQ stock LTlt definition was not loaded");
+    bool resolvedModel = false;
+    std::string attempted;
+    for (const auto& path : w3shadow::modelPathCandidates(*stockTree, 0U)) {
+        if (!attempted.empty()) attempted += ", ";
+        attempted += path;
+        if (assets.load(path)) {
+            resolvedModel = true;
+            break;
+        }
+    }
+    require(resolvedModel, "legacy MPQ could not resolve stock LTlt MDX; tried " + attempted);
+
+    const auto legacyMapPath = directory / L"Maps" / L"Scenario" / L"(1)TheDeathSheep.w3m";
+    if (std::filesystem::is_regular_file(legacyMapPath)) {
+        const w3shadow::MapArchive legacyMap(legacyMapPath);
+        const auto placements = w3shadow::parseDOO(legacyMap.read("war3map.doo"));
+        require(static_cast<bool>(placements), placements.error);
+        require(placements.version == 7U && placements.subversion == 9U &&
+                placements.placements.size() == 65U,
+                "genuine 1.27b DOO v7.9 map was not decoded");
+
+        w3shadow::CompositeAssetProvider generationAssets;
+        generationAssets.add(std::make_shared<w3shadow::MapAssetProvider>(legacyMap));
+        generationAssets.add(std::make_shared<w3shadow::LegacyMpqAssetProvider>(directory));
+        w3shadow::GenerationOptions options;
+        options.shadowSampleGrid = 1U;
+        const auto generated = w3shadow::generateShadowMap(legacyMap, generationAssets, options);
+        require(generated.stats.resolvedPlacements == 65U &&
+                generated.stats.unresolvedPlacements == 0U,
+                "genuine 1.27b map did not resolve every placed-object model");
+    }
+#endif
+}
+
 void testRegions()
 {
     std::vector<std::byte> bytes;
@@ -526,6 +593,7 @@ int main()
         testGeometryAndFormats();
         testObjectShadowOverride();
         testInstalledWarcraftAssets();
+        testLegacyWarcraftAssets();
         testRegions();
         testPng();
         testArchiveReplacement();

@@ -159,13 +159,9 @@ void ObjectDatabase::loadStock(const AssetProvider& assets)
         loadProfile(*doodadSkins, false);
     } else if (const auto doodadSkin = assets.load("Doodads\\DoodadSkin.txt")) {
         loadProfile(*doodadSkin, false);
-    } else {
-        warnings_.emplace_back("stock Doodads\\DoodadSkins.txt could not be loaded");
     }
     if (const auto destructibleSkins = assets.load("Units\\DestructableSkin.txt")) {
         loadProfile(*destructibleSkins, true);
-    } else {
-        warnings_.emplace_back("stock Units\\DestructableSkin.txt could not be loaded");
     }
 }
 

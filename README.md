@@ -1,19 +1,19 @@
 # ShadowMapTool
 
-ShadowMapTool 1.2 is a native Warcraft III static-shadow generator for `.w3x` and `.w3m` maps. It implements the pipeline described in [`wc3_shadowmap_tool_analysis.md`](../_developer/Shadowmap/wc3_shadowmap_tool_analysis.md): map parsing, terrain and placed-object geometry reconstruction, accelerated ray casting, SHD preview/export, and guarded map output. Version 1.2 adds selectable 1x, 2x, and 4x per-pixel edge supersampling; the smoother terrain reconstruction and original version-1 triangulation remain independently selectable.
+ShadowMapTool 1.3 is a native Warcraft III static-shadow generator for `.w3x` and `.w3m` maps. It implements the pipeline described in [`wc3_shadowmap_tool_analysis.md`](../_developer/Shadowmap/wc3_shadowmap_tool_analysis.md): map parsing, terrain and placed-object geometry reconstruction, accelerated ray casting, SHD preview/export, and guarded map output. Version 1.3 adds direct classic MPQ asset loading validated against Warcraft III 1.27b, timestamped session logs, and an expandable in-app About panel. Selectable 1x, 2x, and 4x edge supersampling, smoother terrain reconstruction, and original version-1 triangulation remain independently selectable.
 
 The implementation includes:
 
 - bounds-checked W3E v11/v12 terrain, DOO v7/v8/v13 placement, W3D/W3B v1-v3 custom-object and skin data, W3R v5/v7 region, and MDX geometry readers;
 - stock object-data resolution from SLK data plus current Reforged doodad/destructible skin profiles;
-- map-imported MDX priority, extracted-directory fallback, and runtime Warcraft CASC access;
+- map-imported MDX priority, extracted-directory fallback, runtime Warcraft CASC access, and direct classic MPQ access;
 - transformed doodad/destructible geometry, a median-split BVH, model caching, and parallel ray casting;
 - strict-majority 1x, 2x, or 4x shadow-cell supersampling for cleaner binary SHD edges;
 - case-insensitive `IgnoreShadow...` region exclusion;
 - Object Editor `dshd`/`bshd` shadow filtering, including **Has shadow: False**;
 - bottom-to-top Warcraft SHD serialization with normal top-down GUI and PNG previews;
 - safe map copies by default and explicit backed-up in-place replacement;
-- a high-DPI Windows GUI and a scriptable CLI;
+- a high-DPI Windows GUI with Help, Logs, and expandable About panels, plus a scriptable CLI;
 - deterministic pattern tools retained for format diagnostics.
 
 ## Build
@@ -41,9 +41,9 @@ The Visual Studio 2019 CMake distribution uses the C++20 compatibility mode; new
 
 ## Warcraft assets
 
-Imported map assets are read directly from the map and take priority. The standard Windows build fetches the pinned Unicode CascLib 3.0 dependency and copies `CascLib.dll` beside both executables. Stock doodad/destructible data and models can then be read from an installed Warcraft III directory.
+Imported map assets are read directly from the map and take priority. Current Warcraft III installations are read through the bundled Unicode CascLib 3.0 dependency. Classic installations are read directly from `War3Patch.mpq`, `War3xLocal.mpq`, `War3Local.mpq`, `War3x.mpq`, and `War3.mpq` in patch/local/expansion/base priority; CascLib is not required for those installations.
 
-On first GUI start, the tool attempts to find the Warcraft III installation and the sibling `CascLib.dll`. If either is not found, the **Assets** panel opens. Both locations can be changed with **Browse** or retried with **Auto-detect**. Valid choices are stored for the current Windows user under `HKCU\Software\ShadowMapTool`; they are not tied to a map or the executable folder.
+On first GUI start, the tool attempts to find a Warcraft III installation and, for CASC storage, the sibling `CascLib.dll`. If usable assets are not found, the **Assets** panel opens. Use **Browse** for nonstandard locations such as `F:\Pelit\Warcraft III 1.27b`, or retry standard and registry locations with **Auto-detect**. Valid choices are stored for the current Windows user under `HKCU\Software\ShadowMapTool`; they are not tied to a map or the executable folder.
 
 Alternative asset configurations are:
 
@@ -64,7 +64,7 @@ Launch from Explorer or PowerShell:
 To calculate the complete shadowmap:
 
 1. Browse to a map or drop it onto the window.
-2. Open **Assets** if the Warcraft III installation or `CascLib.dll` location needs changing.
+2. Open **Assets** if the Warcraft III installation needs changing. CascLib is required only for CASC installations.
 3. Choose whether Terrain, Doodads, and Destructibles contribute shadows.
 4. Choose **Smooth sub-tile** (default) or **Classic triangles** for terrain geometry.
 5. Choose **Ultra 4x** edge quality for the smoothest outline, **Smooth 2x** for a faster compromise, or **Fast 1x** for the original single-ray behavior.
@@ -85,6 +85,14 @@ Regions whose names start with `IgnoreShadow` clear their contents when **Ignore
 The historical calculator skipped alpha terrain tiles. Automatic alpha-BLP detection is not implemented yet. Until it is, temporarily replace alpha tiles before calculating and restore them afterward, or cover them with an `IgnoreShadow` region.
 
 Open in-app instructions with **? Help** or `F1`. Keyboard users can navigate with `Tab`, activate controls with `Enter` or `Space`, open a map with `Ctrl+O`, calculate with `Ctrl+S`, and close Help with `Esc`.
+
+The **Logs** button opens the `logs` directory beside the executable. Every GUI run creates a timestamped UTF-8 log containing session lifecycle events, selected asset backend, loaded maps, successes, warnings, and failures. If the executable directory is not writable, logs fall back to `%LOCALAPPDATA%\ShadowMapTool\logs`. The **About** panel contains expandable purpose, origin, compatibility, limitation, and credit sections.
+
+## Warcraft version compatibility
+
+The intended target is current Warcraft III 3.0. Direct legacy asset access has also been validated against the supplied Warcraft III 1.27b installation: its stock SLK databases and classic MDX models resolve from MPQ, and a complete 64 × 64 reference-map calculation resolved all 50 placed objects with zero unresolved models. The parser covers legacy W3E v11, DOO v7/v8, W3R v5, object-data v1-v3, and MDX 800 inputs.
+
+The tool replaces only `war3map.shd`; it does not convert the rest of a map for an older client. A map must already be compatible with the Warcraft version used to open it. For an unsupported installation layout, terrain-only mode requires no game assets, map-imported models remain usable, and the CLI can consume an extracted Warcraft asset tree through `--asset-dir`.
 
 ## Command-line workflow
 
