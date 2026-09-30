@@ -70,6 +70,34 @@ std::span<const std::byte> ShadowMap::bytes() const noexcept
     return pixels_;
 }
 
+std::vector<std::byte> ShadowMap::warcraftBytes() const
+{
+    std::vector<std::byte> result(pixels_.size());
+    const auto rowSize = static_cast<std::size_t>(widthPixels_);
+    for (std::uint32_t y = 0; y < heightPixels_; ++y) {
+        const auto sourceOffset = static_cast<std::size_t>(y) * rowSize;
+        const auto destinationOffset = static_cast<std::size_t>(heightPixels_ - 1U - y) * rowSize;
+        std::copy_n(pixels_.begin() + static_cast<std::ptrdiff_t>(sourceOffset), rowSize,
+                    result.begin() + static_cast<std::ptrdiff_t>(destinationOffset));
+    }
+    return result;
+}
+
+void ShadowMap::loadWarcraftBytes(const std::span<const std::byte> bytes)
+{
+    if (bytes.size() != pixels_.size()) {
+        throw std::invalid_argument("SHD byte count does not match the shadow-map dimensions");
+    }
+
+    const auto rowSize = static_cast<std::size_t>(widthPixels_);
+    for (std::uint32_t y = 0; y < heightPixels_; ++y) {
+        const auto sourceOffset = static_cast<std::size_t>(heightPixels_ - 1U - y) * rowSize;
+        const auto destinationOffset = static_cast<std::size_t>(y) * rowSize;
+        std::copy_n(bytes.begin() + static_cast<std::ptrdiff_t>(sourceOffset), rowSize,
+                    pixels_.begin() + static_cast<std::ptrdiff_t>(destinationOffset));
+    }
+}
+
 std::size_t ShadowMap::checkedIndex(const std::uint32_t x, const std::uint32_t y) const
 {
     if (x >= widthPixels_ || y >= heightPixels_) {

@@ -1,23 +1,23 @@
 # ShadowMapTool
 
-`w3shadow` is the first validation-stage implementation of the modern Warcraft III ShadowMap Calculator described in [`wc3_shadowmap_tool_analysis.md`](../_developer/Shadowmap/wc3_shadowmap_tool_analysis.md).
+ShadowMapTool 1.0 is a native Warcraft III static-shadow generator for `.w3x` and `.w3m` maps. It implements the complete version-1 pipeline described in [`wc3_shadowmap_tool_analysis.md`](../_developer/Shadowmap/wc3_shadowmap_tool_analysis.md): map parsing, terrain and placed-object geometry reconstruction, accelerated ray casting, SHD preview/export, and guarded map output.
 
-This milestone intentionally covers only the lowest-risk format layer:
+The implementation includes:
 
-- deterministic artificial `war3map.shd` patterns;
-- grayscale PNG previews without a runtime image dependency;
-- bounds-checked `war3map.w3e` dimension parsing;
-- MPQ inspection and extraction through StormLib;
-- validated `war3map.shd` replacement in a copied map;
-- explicit, backed-up in-place replacement.
-- a native high-DPI Windows GUI with interactive pattern preview.
-
-Terrain geometry, MDX, CASC, object data, ray casting, and a GUI remain out of scope until the generated patterns are verified in the current Warcraft III client.
+- bounds-checked W3E v11/v12 terrain, DOO v7/v8/v13 placement, W3D/W3B v1-v3 custom-object and skin data, W3R v5/v7 region, and MDX geometry readers;
+- stock object-data resolution from SLK data plus current Reforged doodad/destructible skin profiles;
+- map-imported MDX priority, extracted-directory fallback, and runtime Warcraft CASC access;
+- transformed doodad/destructible geometry, a median-split BVH, model caching, and parallel ray casting;
+- case-insensitive `IgnoreShadow...` region exclusion;
+- Object Editor `dshd`/`bshd` shadow filtering, including **Has shadow: False**;
+- bottom-to-top Warcraft SHD serialization with normal top-down GUI and PNG previews;
+- safe map copies by default and explicit backed-up in-place replacement;
+- a high-DPI Windows GUI and a scriptable CLI;
+- deterministic pattern tools retained for format diagnostics.
 
 ## Build
 
-The build pins the official StormLib repository at the immutable `v9.40` release commit and builds its bundled compression dependencies statically. See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
-Modern CMake/toolchain combinations compile in C++23 mode. The CMake 3.20 bundled with Visual Studio 2019 uses a C++20 compatibility dialect because that CMake release cannot model `CXX23`; this foundation currently uses no post-C++20 language features.
+From the `ShadowMapTool` directory:
 
 ```powershell
 cmake -S . -B build -DBUILD_TESTING=ON
@@ -25,96 +25,126 @@ cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-The build produces two applications:
-
-- `build/Release/w3shadow-gui.exe` — modern desktop interface;
-- `build/Release/w3shadow.exe` — scriptable command-line interface.
-
-To use an already installed StormLib CMake package:
+The build pins StormLib v9.40 and normally obtains it through CMake. To use an installed StormLib package instead:
 
 ```powershell
 cmake -S . -B build -DSHADOWMAPTOOL_FETCH_STORMLIB=OFF
 ```
 
-## Desktop interface
+Outputs:
 
-Launch the GUI from PowerShell or Explorer:
+- `build/Release/w3shadow-gui.exe` — Windows desktop application;
+- `build/Release/w3shadow.exe` — command-line application.
+
+The Visual Studio 2019 CMake distribution uses the C++20 compatibility mode; newer CMake/toolchains select C++23. The implementation currently needs no post-C++20 language feature.
+
+## Warcraft assets
+
+Imported map assets are read directly from the map and take priority. The standard Windows build fetches the pinned Unicode CascLib 3.0 dependency and copies `CascLib.dll` beside both executables. Keep the DLL beside the executable when moving the Release folder. Stock doodad/destructible data and models can then be read from an installed Warcraft III directory.
+
+Alternative asset configurations are:
+
+1. On the CLI, provide a nonstandard Warcraft installation or DLL explicitly with `--war3-dir` and `--casc-lib`.
+2. Export the Warcraft virtual asset tree to a directory and use `--asset-dir`.
+
+If a map has live placed objects and no object model can be resolved, the tool stops before writing output instead of silently creating a terrain-only map. Individually unresolved object types are summarized as warnings.
+
+## Desktop workflow
+
+Launch from Explorer or PowerShell:
 
 ```powershell
 .\build\Release\w3shadow-gui.exe
+.\build\Release\w3shadow-gui.exe C:\Maps\MyMap.w3x
 ```
 
-You can also pass a map directly or drop a `.w3x`/`.w3m` file onto the window:
+To calculate the complete shadowmap:
+
+1. Browse to a map or drop it onto the window.
+2. Choose whether Terrain, Doodads, and Destructibles contribute shadows.
+3. Keep the default light vector `(1, 1, -1)`, or enter custom X/Y/Z values.
+4. Select **Calculate shadows**. This renders the complete proposed SHD in memory and does not modify or create a map.
+5. Inspect the calculated full-map preview and warning count. Change settings and calculate again if needed.
+6. Keep **Save as copy** selected for the first run, then select **Save to map** and choose the output map.
+7. Open the copy directly in Warcraft III for validation before saving it in World Editor.
+
+The **In place + backup** mode asks for confirmation and preserves a numbered `.w3shadow.bak` copy. Opening a map previews its existing SHD, which can be empty; **Calculate shadows** replaces that view with the newly rendered complete SHD before anything is saved. Changing a calculation option marks the result stale and disables saving until it is recalculated. Diagnostic patterns are only available while **Test mode** is on. **Export SHD** and **Export PNG** export whichever full-map preview is currently shown.
+
+Regions whose names start with `IgnoreShadow` clear their contents when **IgnoreShadow rects** is enabled. To suppress an unwanted object shadow, set that doodad/destructible's **Has shadow** field to **False** in Object Editor before calculating.
+
+The historical calculator skipped alpha terrain tiles. Automatic alpha-BLP detection is not implemented yet. Until it is, temporarily replace alpha tiles before calculating and restore them afterward, or cover them with an `IgnoreShadow` region.
+
+Open in-app instructions with **? Help** or `F1`. Keyboard users can navigate with `Tab`, activate controls with `Enter` or `Space`, open a map with `Ctrl+O`, calculate with `Ctrl+S`, and close Help with `Esc`.
+
+## Command-line workflow
+
+The safe default writes `<name>.shadowed.w3x` or `<name>.shadowed.w3m`:
 
 ```powershell
-.\build\Release\w3shadow-gui.exe C:\Maps\TestMap.w3x
+w3shadow generate MyMap.w3x
 ```
 
-The default workflow is:
-
-1. Browse to or drop a map.
-2. Select one of the six validation patterns.
-3. Confirm the live SHD preview and dimensions.
-4. Keep **Save as copy** selected.
-5. Choose **Build pattern test** and select an output path.
-
-The GUI also exports standalone SHD and PNG files. In-place replacement is a separate mode, requires confirmation, and retains a numbered `.w3shadow.bak` copy. Keyboard users can move between controls with `Tab`, activate them with `Enter` or `Space`, open a map with `Ctrl+O`, and build with `Ctrl+S`.
-
-Open the in-app Help section with **? Help** or `F1`; close it with `Esc`.
-
-### Full shadow generation status
-
-Version 0.2 cannot yet calculate a complete gameplay shadowmap from terrain and placed objects. It does not currently reconstruct cliffs, resolve doodad/destructible models, load MDX/CASC geometry, or ray-trace the scene. **Build pattern test** inserts the selected artificial pattern for SHD compatibility testing; it is not a full calculated shadowmap.
-
-The pattern tests must first establish current-client byte semantics, X/Y orientation, row order, and border behavior. Full calculation is the next phase after those results are confirmed in Warcraft III.
-
-## Command-line interface
-
-Generate an orientation test and preview:
+Generate a map copy plus diagnostics:
 
 ```powershell
-w3shadow pattern --map-width 64 --map-height 64 --pattern quadrants --output test.shd --png test.png
+w3shadow generate MyMap.w3x `
+    --output MyMap.shadowed.w3x `
+    --png shadow.png `
+    --dump-shadow war3map.shd `
+    --dump-scene scene.obj
 ```
 
-Inspect a map, list known archive files, and report W3E/SHD dimensions:
+Select asset sources and performance settings:
+
+```powershell
+w3shadow generate MyMap.w3x `
+    --war3-dir "C:\Program Files (x86)\Warcraft III" `
+    --casc-lib C:\Tools\CascLib.dll `
+    --threads 8
+```
+
+Useful generation options:
+
+- `--asset-dir DIR` supplies an extracted Warcraft-style virtual asset tree;
+- `--light-x N --light-y N --light-z N` changes the default `(1, 1, -1)` light direction;
+- `--no-terrain`, `--no-doodads`, and `--no-destructibles` isolate geometry categories;
+- `--no-honor-ignore-shadow` disables `IgnoreShadow...` region clearing;
+- `--in-place` modifies the input only after creating a backup;
+- `--force` permits overwriting an existing copy/diagnostic file, never the input map.
+
+The output summary reports placements, resolved and unresolved models, unique models, triangle and ray counts, timings, and warnings.
+
+## Inspection and SHD diagnostics
 
 ```powershell
 w3shadow inspect MyMap.w3x
 w3shadow inspect MyMap.w3x --export-shadow current.shd --png current.png
+w3shadow inspect-shadow current.shd --map-width 64 --map-height 64 --png current.png
 ```
 
-Inspect a standalone SHD:
+Generate a deterministic orientation pattern and insert it into a copy:
 
 ```powershell
-w3shadow inspect-shadow test.shd --map-width 64 --map-height 64 --png test.png
+w3shadow pattern --map-width 64 --map-height 64 --pattern quadrants --output test.shd --png test.png
+w3shadow replace-shd MyMap.w3x test.shd --output MyMap.shadowtest.w3x
 ```
 
-Insert a generated SHD into a new map copy:
+Available patterns are `black`, `white`, `checker`, `x-gradient`, `y-gradient`, and `quadrants`.
 
-```powershell
-w3shadow replace-shd MyMap.w3x test.shd --output MyMap_shadowtest.w3x
-```
+## Confirmed SHD contract
 
-Without `--output`, the safe default is `MyMap.shadowed.w3x`.
+In-game tests on 29 September 2026 confirmed:
 
-In-place replacement is never implicit. When requested, the original becomes a numbered `*.w3shadow.bak` file:
+- `0x00` is lit and `0xFF` is fully shadowed;
+- X is stored left-to-right;
+- SHD rows are stored bottom-to-top;
+- the file contains exactly `tileWidth * tileHeight * 16` bytes;
+- tested map borders align without a header, offset, or padding.
 
-```powershell
-w3shadow replace-shd MyMap.w3x test.shd --in-place
-```
+The tool stores working previews top-to-bottom and reverses rows only at the Warcraft SHD boundary. Pattern maps created by version 0.2 before this correction are vertically inverted and should be rebuilt.
 
-Use `--force` only to replace an existing non-input output file.
+## Version 1 limitations
 
-## Pattern semantics
+Version 1 deliberately uses the MDX bind/default pose and treats parsed geoset triangles as opaque. Animated visibility, transparent-material filtering, automatic alpha-tile exclusion, exact cliff-model faces, and World Editor shadow dilation remain compatibility work that requires isolated in-game reference maps. Terrain cliff-layer elevations are included, but the terrain surface is triangulated rather than reconstructed from cliff art models.
 
-The current unverified assumption is `0x00 = lit` and `0xFF = shadowed`. PNG output maps lit to white and shadowed to black.
-
-- `white`: all `0x00`
-- `black`: all `0xFF`
-- `checker`: alternating terrain-tile-sized blocks
-- `x-gradient`: `0x00` to `0xFF` as stored X increases
-- `y-gradient`: `0x00` to `0xFF` as stored Y increases
-- `quadrants`: white, black, vertical stripes, and checker quadrants
-
-The following analysis questions remain empirical TODOs: `TODO-SHD-001` byte meaning, `TODO-SHD-002` orientation, and `TODO-SHD-003` padding/borders.
-
+The format, archive, parser, BVH, GUI-smoke, production 50,118-placement DOO fixture, current-map DOO/W3B/W3D/W3R, Object Editor shadow override, and terrain-only end-to-end paths are automated. The installed-Warcraft integration test validates stock SLK/profile and MDX resolution when a Warcraft III installation is available.

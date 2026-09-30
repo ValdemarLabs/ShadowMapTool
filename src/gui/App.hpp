@@ -27,9 +27,14 @@ public:
 private:
     enum class OutputMode { Copy, InPlace };
     enum class StatusKind { Neutral, Success, Warning, Error };
+    enum class PreviewKind { Empty, Existing, Calculated, Test };
     enum class Target : int {
         None = -1,
         Browse,
+        Terrain,
+        Doodads,
+        Destructibles,
+        IgnoreRegions,
         PatternBlack,
         PatternWhite,
         PatternChecker,
@@ -41,6 +46,8 @@ private:
         ExportShd,
         ExportPng,
         BuildMap,
+        SaveMap,
+        TestMode,
         Help,
         HelpClose,
         Count
@@ -50,7 +57,9 @@ private:
         D2D1_RECT_F mapCard{};
         D2D1_RECT_F browse{};
         D2D1_RECT_F patternCard{};
+        std::array<D2D1_RECT_F, 4> calculationOptions{};
         std::array<D2D1_RECT_F, 6> patterns{};
+        std::array<D2D1_RECT_F, 3> lightEdits{};
         D2D1_RECT_F outputCard{};
         D2D1_RECT_F copyMode{};
         D2D1_RECT_F inPlaceMode{};
@@ -59,6 +68,8 @@ private:
         D2D1_RECT_F exportShd{};
         D2D1_RECT_F exportPng{};
         D2D1_RECT_F buildMap{};
+        D2D1_RECT_F saveMap{};
+        D2D1_RECT_F testMode{};
         D2D1_RECT_F help{};
         D2D1_RECT_F helpClose{};
         D2D1_RECT_F status{};
@@ -74,6 +85,7 @@ private:
     void paint();
     void resize(UINT width, UINT height);
     void updateDpi(UINT dpi);
+    void updateEditControls();
 
     [[nodiscard]] Layout calculateLayout() const;
     [[nodiscard]] Target hitTest(float x, float y) const;
@@ -85,9 +97,12 @@ private:
     void loadMap(const std::filesystem::path& path);
     void selectPattern(Pattern pattern);
     void rebuildPreview();
+    void refreshPreviewBitmap();
     void exportShadow();
     void exportPng();
-    void buildTestMap();
+    void calculateShadows();
+    void saveShadowMap();
+    [[nodiscard]] Vec3 readLightDirection() const;
 
     void setStatus(std::wstring message, StatusKind kind);
     void showError(const std::wstring& action, const std::exception& error);
@@ -106,6 +121,8 @@ private:
         bool primary = false);
 
     HWND window_ = nullptr;
+    std::array<HWND, 3> lightEdits_{};
+    HBRUSH editBrush_ = nullptr;
     UINT dpi_ = 96;
     bool trackingMouse_ = false;
     Target hovered_ = Target::None;
@@ -139,6 +156,13 @@ private:
     Pattern pattern_ = Pattern::Quadrants;
     OutputMode outputMode_ = OutputMode::Copy;
     bool showHelp_ = false;
+    bool testMode_ = false;
+    bool includeTerrain_ = true;
+    bool includeDoodads_ = true;
+    bool includeDestructibles_ = true;
+    bool honorIgnoreRegions_ = true;
+    bool calculationDirty_ = false;
+    PreviewKind previewKind_ = PreviewKind::Empty;
     std::wstring status_ = L"Choose a Warcraft III map to begin.";
     StatusKind statusKind_ = StatusKind::Neutral;
 };

@@ -1,17 +1,23 @@
 #include "cli/Cli.hpp"
 
 #include "archive/MapArchive.hpp"
+#include "assets/AssetProvider.hpp"
 #include "formats/Png.hpp"
 #include "formats/W3E.hpp"
 #include "shadow/Pattern.hpp"
+#include "shadow/ShadowGenerator.hpp"
 #include "shadow/ShadowMap.hpp"
 #include "util/FileIO.hpp"
 
+#include <array>
 #include <charconv>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <iomanip>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -34,9 +40,22 @@ struct Options {
     std::optional<std::filesystem::path> output;
     std::optional<std::filesystem::path> png;
     std::optional<std::filesystem::path> exportShadow;
+    std::optional<std::filesystem::path> dumpShadow;
+    std::optional<std::filesystem::path> dumpScene;
+    std::optional<std::filesystem::path> assetDirectory;
+    std::optional<std::filesystem::path> warcraftDirectory;
+    std::optional<std::filesystem::path> cascLibrary;
     std::optional<std::uint32_t> mapWidth;
     std::optional<std::uint32_t> mapHeight;
     std::optional<Pattern> pattern;
+    std::optional<float> lightX;
+    std::optional<float> lightY;
+    std::optional<float> lightZ;
+    std::optional<std::uint32_t> threads;
+    bool terrain = true;
+    bool doodads = true;
+    bool destructibles = true;
+    bool honorIgnoreShadowRegions = true;
     bool inPlace = false;
     bool force = false;
 };
@@ -44,14 +63,30 @@ struct Options {
 void printHelp()
 {
     std::cout <<
-        "w3shadow 0.2.0 - Warcraft III shadow-map validation tool\n\n"
+        "w3shadow 1.0.0 - Warcraft III static shadow-map generator\n\n"
         "Commands:\n"
+        "  generate MAP [--output MAP | --in-place] [--war3-dir DIR] [--asset-dir DIR]\n"
+        "               [--light-x N --light-y N --light-z N] [--threads N]\n"
+        "               [--no-terrain] [--no-doodads] [--no-destructibles]\n"
+        "               [--no-honor-ignore-shadow] [--casc-lib FILE]\n"
+        "               [--png FILE] [--dump-shadow FILE] [--dump-scene FILE] [--force]\n"
         "  pattern --map-width W --map-height H --pattern NAME --output FILE [--png FILE] [--force]\n"
         "  inspect MAP [--export-shadow FILE] [--png FILE] [--force]\n"
         "  inspect-shadow SHD --map-width W --map-height H [--png FILE] [--force]\n"
         "  replace-shd MAP SHD [--output MAP | --in-place] [--force]\n\n"
         "replace-shd defaults to <name>.shadowed.<extension>; --in-place keeps a backup.\n"
         "Patterns: black, white, checker, x-gradient, y-gradient, quadrants\n";
+}
+
+float parseFiniteFloat(const std::string_view text, const std::string_view option)
+{
+    std::string owned(text);
+    std::size_t consumed = 0;
+    const auto value = std::stof(owned, &consumed);
+    if (consumed != owned.size() || !std::isfinite(value)) {
+        throw std::invalid_argument(std::string(option) + " requires a finite number");
+    }
+    return value;
 }
 
 std::uint32_t parsePositiveU32(const std::string_view text, const std::string_view option)
@@ -80,6 +115,16 @@ Options parseOptions(const int argc, char* argv[], const int first)
             options.png = std::filesystem::path(requireValue(argument));
         } else if (argument == "--export-shadow") {
             options.exportShadow = std::filesystem::path(requireValue(argument));
+        } else if (argument == "--dump-shadow") {
+            options.dumpShadow = std::filesystem::path(requireValue(argument));
+        } else if (argument == "--dump-scene") {
+            options.dumpScene = std::filesystem::path(requireValue(argument));
+        } else if (argument == "--asset-dir") {
+            options.assetDirectory = std::filesystem::path(requireValue(argument));
+        } else if (argument == "--war3-dir") {
+            options.warcraftDirectory = std::filesystem::path(requireValue(argument));
+        } else if (argument == "--casc-lib") {
+            options.cascLibrary = std::filesystem::path(requireValue(argument));
         } else if (argument == "--map-width") {
             options.mapWidth = parsePositiveU32(requireValue(argument), argument);
         } else if (argument == "--map-height") {
@@ -87,6 +132,22 @@ Options parseOptions(const int argc, char* argv[], const int first)
         } else if (argument == "--pattern") {
             options.pattern = parsePattern(requireValue(argument));
             if (!options.pattern) throw std::invalid_argument("unknown pattern name");
+        } else if (argument == "--light-x") {
+            options.lightX = parseFiniteFloat(requireValue(argument), argument);
+        } else if (argument == "--light-y") {
+            options.lightY = parseFiniteFloat(requireValue(argument), argument);
+        } else if (argument == "--light-z") {
+            options.lightZ = parseFiniteFloat(requireValue(argument), argument);
+        } else if (argument == "--threads") {
+            options.threads = parsePositiveU32(requireValue(argument), argument);
+        } else if (argument == "--no-terrain") {
+            options.terrain = false;
+        } else if (argument == "--no-doodads") {
+            options.doodads = false;
+        } else if (argument == "--no-destructibles") {
+            options.destructibles = false;
+        } else if (argument == "--no-honor-ignore-shadow") {
+            options.honorIgnoreShadowRegions = false;
         } else if (argument == "--in-place") {
             options.inPlace = true;
         } else if (argument == "--force") {
@@ -96,6 +157,18 @@ Options parseOptions(const int argc, char* argv[], const int first)
         }
     }
     return options;
+}
+
+std::optional<std::filesystem::path> detectedWarcraftDirectory()
+{
+#ifdef _WIN32
+    const std::array<std::filesystem::path, 2> candidates{
+        L"C:\\Program Files (x86)\\Warcraft III", L"C:\\Program Files\\Warcraft III"};
+    for (const auto& candidate : candidates) {
+        if (std::filesystem::exists(candidate / L".build.info")) return candidate;
+    }
+#endif
+    return std::nullopt;
 }
 
 std::uint64_t expectedShadowBytes(const W3EInfo& info)
@@ -131,6 +204,18 @@ void writePreview(
     writeBinaryFileAtomic(path, png, force);
 }
 
+void writeWarcraftPreview(
+    const std::filesystem::path& path,
+    const std::uint32_t widthTiles,
+    const std::uint32_t heightTiles,
+    const std::span<const std::byte> warcraftBytes,
+    const bool force)
+{
+    ShadowMap decoded(widthTiles, heightTiles);
+    decoded.loadWarcraftBytes(warcraftBytes);
+    writePreview(path, widthTiles, heightTiles, decoded.bytes(), force);
+}
+
 int commandPattern(const int argc, char* argv[])
 {
     const auto options = parseOptions(argc, argv, 2);
@@ -146,11 +231,12 @@ int commandPattern(const int argc, char* argv[])
 
     ShadowMap shadow(*options.mapWidth, *options.mapHeight);
     generatePattern(shadow, *options.pattern);
-    writeBinaryFileAtomic(*options.output, shadow.bytes(), options.force);
+    const auto warcraftBytes = shadow.warcraftBytes();
+    writeBinaryFileAtomic(*options.output, warcraftBytes, options.force);
     if (options.png) {
         writePreview(*options.png, shadow.widthTiles(), shadow.heightTiles(), shadow.bytes(), options.force);
     }
-    std::cout << "Wrote " << shadow.bytes().size() << " SHD bytes ("
+    std::cout << "Wrote " << warcraftBytes.size() << " SHD bytes ("
               << shadow.widthPixels() << 'x' << shadow.heightPixels() << ") to "
               << options.output->string() << '\n';
     return static_cast<int>(ExitCode::Success);
@@ -195,7 +281,9 @@ int commandInspect(const int argc, char* argv[])
         throw std::invalid_argument("--export-shadow and --png must name different files");
     }
     if (options.exportShadow) writeBinaryFileAtomic(*options.exportShadow, *shadow, options.force);
-    if (options.png) writePreview(*options.png, info.tileWidth, info.tileHeight, *shadow, options.force);
+    if (options.png) {
+        writeWarcraftPreview(*options.png, info.tileWidth, info.tileHeight, *shadow, options.force);
+    }
     return static_cast<int>(ExitCode::Success);
 }
 
@@ -218,7 +306,9 @@ int commandInspectShadow(const int argc, char* argv[])
     std::cout << "SHD: " << shadowPath.string() << '\n'
               << "Dimensions: " << expected.widthPixels() << 'x' << expected.heightPixels() << '\n'
               << "Bytes: " << shadow.size() << " (size matches)\n";
-    if (options.png) writePreview(*options.png, *options.mapWidth, *options.mapHeight, shadow, options.force);
+    if (options.png) {
+        writeWarcraftPreview(*options.png, *options.mapWidth, *options.mapHeight, shadow, options.force);
+    }
     return static_cast<int>(ExitCode::Success);
 }
 
@@ -264,6 +354,71 @@ int commandReplace(const int argc, char* argv[])
     return static_cast<int>(ExitCode::Success);
 }
 
+int commandGenerate(const int argc, char* argv[])
+{
+    if (argc < 3) throw std::invalid_argument("generate requires a map path");
+    const std::filesystem::path mapPath(argv[2]);
+    auto options = parseOptions(argc, argv, 3);
+    if (options.pattern || options.exportShadow || options.mapWidth || options.mapHeight) {
+        throw std::invalid_argument("generate received an option that belongs to another command");
+    }
+    if (options.inPlace && options.output) throw std::invalid_argument("choose only one of --output or --in-place");
+    if (options.inPlace && options.force) throw std::invalid_argument("--force is not used with --in-place");
+    if (!options.inPlace && !options.output) {
+        options.output = mapPath.parent_path() /
+            (mapPath.stem().string() + ".shadowed" + mapPath.extension().string());
+    }
+
+    const MapArchive archive(mapPath);
+    auto mapAssets = std::make_shared<MapAssetProvider>(archive);
+    CompositeAssetProvider assets;
+    assets.add(mapAssets);
+    if (options.assetDirectory) assets.add(std::make_shared<DirectoryAssetProvider>(*options.assetDirectory));
+    const auto warcraftDirectory = options.warcraftDirectory ? options.warcraftDirectory : detectedWarcraftDirectory();
+    std::shared_ptr<CascAssetProvider> casc;
+    if (warcraftDirectory && (options.doodads || options.destructibles)) {
+        casc = std::make_shared<CascAssetProvider>(*warcraftDirectory, options.cascLibrary);
+        if (casc->available()) assets.add(casc);
+        else std::cerr << "WARN: " << casc->error() << '\n';
+    }
+
+    GenerationOptions generation;
+    if (options.lightX) generation.lightDirection.x = *options.lightX;
+    if (options.lightY) generation.lightDirection.y = *options.lightY;
+    if (options.lightZ) generation.lightDirection.z = *options.lightZ;
+    if (options.threads) generation.threadCount = *options.threads;
+    generation.terrain = options.terrain;
+    generation.doodads = options.doodads;
+    generation.destructibles = options.destructibles;
+    generation.honorIgnoreShadowRegions = options.honorIgnoreShadowRegions;
+    auto result = generateShadowMap(archive, assets, generation);
+    const auto warcraftBytes = result.shadow.warcraftBytes();
+
+    if (options.dumpShadow) writeBinaryFileAtomic(*options.dumpShadow, warcraftBytes, options.force);
+    if (options.dumpScene) writeBinaryFileAtomic(*options.dumpScene, exportObj(result.sceneTriangles), options.force);
+    if (options.png) writePreview(*options.png, result.stats.mapWidth, result.stats.mapHeight,
+                                  result.shadow.bytes(), options.force);
+    if (options.inPlace) {
+        const auto backup = MapArchive::replaceShadowInPlace(mapPath, warcraftBytes);
+        std::cout << "Updated " << mapPath.string() << "\nBackup: " << backup.string() << '\n';
+    } else {
+        MapArchive::replaceShadowInCopy(mapPath, *options.output, warcraftBytes, options.force);
+        std::cout << "Wrote validated map copy: " << options.output->string() << '\n';
+    }
+    const auto total = result.stats.loadSeconds + result.stats.bvhSeconds + result.stats.raySeconds;
+    std::cout << "Scene: " << result.stats.placements << " placements, "
+              << result.stats.resolvedPlacements << " resolved, "
+              << result.stats.unresolvedPlacements << " unresolved, "
+              << result.stats.uniqueModels << " unique models, "
+              << result.stats.triangles << " triangles\n"
+              << "Shadow: " << result.stats.shadowedSamples << '/' << result.stats.rays
+              << " samples in " << std::fixed << std::setprecision(3) << total << " s"
+              << " (load " << result.stats.loadSeconds << ", BVH " << result.stats.bvhSeconds
+              << ", rays " << result.stats.raySeconds << ")\n";
+    for (const auto& warning : result.warnings) std::cerr << "WARN: " << warning << '\n';
+    return static_cast<int>(ExitCode::Success);
+}
+
 } // namespace
 
 int runCli(const int argc, char* argv[])
@@ -275,6 +430,7 @@ int runCli(const int argc, char* argv[])
 
     try {
         const std::string_view command(argv[1]);
+        if (command == "generate") return commandGenerate(argc, argv);
         if (command == "pattern") return commandPattern(argc, argv);
         if (command == "inspect") return commandInspect(argc, argv);
         if (command == "inspect-shadow") return commandInspectShadow(argc, argv);
@@ -291,4 +447,3 @@ int runCli(const int argc, char* argv[])
 }
 
 } // namespace w3shadow
-

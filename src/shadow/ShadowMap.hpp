@@ -25,7 +25,10 @@ public:
     void setValue(std::uint32_t x, std::uint32_t y, std::uint8_t value);
     [[nodiscard]] std::uint8_t value(std::uint32_t x, std::uint32_t y) const;
 
+    // Internal/UI order is top-to-bottom. Warcraft SHD rows are bottom-to-top.
     [[nodiscard]] std::span<const std::byte> bytes() const noexcept;
+    [[nodiscard]] std::vector<std::byte> warcraftBytes() const;
+    void loadWarcraftBytes(std::span<const std::byte> bytes);
 
 private:
     [[nodiscard]] std::size_t checkedIndex(std::uint32_t x, std::uint32_t y) const;
