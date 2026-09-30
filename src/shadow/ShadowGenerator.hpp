@@ -2,6 +2,7 @@
 
 #include "archive/MapArchive.hpp"
 #include "assets/AssetProvider.hpp"
+#include "formats/W3E.hpp"
 #include "geometry/Geometry.hpp"
 #include "shadow/ShadowMap.hpp"
 
@@ -15,6 +16,7 @@ struct GenerationOptions {
     Vec3 lightDirection{1.0F, 1.0F, -1.0F};
     std::uint32_t threadCount = 0;
     float rayOriginOffset = 0.5F;
+    TerrainGeometryMode terrainGeometry = TerrainGeometryMode::SmoothSubTile;
     bool terrain = true;
     bool doodads = true;
     bool destructibles = true;

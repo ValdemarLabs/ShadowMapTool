@@ -32,6 +32,7 @@ using Microsoft::WRL::ComPtr;
 
 constexpr wchar_t WindowClassName[] = L"W3ShadowModernWindow";
 constexpr wchar_t WindowTitle[] = L"ShadowMap Tool";
+constexpr wchar_t SettingsRegistryKey[] = L"Software\\ShadowMapTool";
 
 D2D1_COLOR_F rgb(const std::uint32_t value, const float alpha = 1.0F)
 {
@@ -134,6 +135,99 @@ std::optional<std::filesystem::path> openMapDialog(HWND owner)
     return result;
 }
 
+std::optional<std::filesystem::path> chooseFolderDialog(
+    HWND owner, const std::wstring_view title)
+{
+    ComPtr<IFileOpenDialog> dialog;
+    if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
+                                IID_PPV_ARGS(&dialog)))) {
+        throw std::runtime_error("Unable to create the Windows folder dialog");
+    }
+    dialog->SetTitle(std::wstring(title).c_str());
+    FILEOPENDIALOGOPTIONS options = 0;
+    dialog->GetOptions(&options);
+    dialog->SetOptions(options | FOS_PICKFOLDERS | FOS_PATHMUSTEXIST);
+    const HRESULT shown = dialog->Show(owner);
+    if (shown == HRESULT_FROM_WIN32(ERROR_CANCELLED)) return std::nullopt;
+    if (FAILED(shown)) throw std::runtime_error("The Windows folder dialog failed");
+
+    ComPtr<IShellItem> item;
+    if (FAILED(dialog->GetResult(&item))) throw std::runtime_error("No folder was selected");
+    PWSTR path = nullptr;
+    if (FAILED(item->GetDisplayName(SIGDN_FILESYSPATH, &path))) {
+        throw std::runtime_error("Unable to read the selected folder path");
+    }
+    const std::filesystem::path result(path);
+    CoTaskMemFree(path);
+    return result;
+}
+
+std::optional<std::filesystem::path> openLibraryDialog(HWND owner)
+{
+    ComPtr<IFileOpenDialog> dialog;
+    if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
+                                IID_PPV_ARGS(&dialog)))) {
+        throw std::runtime_error("Unable to create the Windows open dialog");
+    }
+    const COMDLG_FILTERSPEC filters[] = {
+        {L"CascLib library", L"CascLib.dll"},
+        {L"Dynamic-link libraries", L"*.dll"}};
+    dialog->SetFileTypes(static_cast<UINT>(std::size(filters)), filters);
+    dialog->SetTitle(L"Choose CascLib.dll");
+    FILEOPENDIALOGOPTIONS options = 0;
+    dialog->GetOptions(&options);
+    dialog->SetOptions(options | FOS_FILEMUSTEXIST | FOS_PATHMUSTEXIST);
+    const HRESULT shown = dialog->Show(owner);
+    if (shown == HRESULT_FROM_WIN32(ERROR_CANCELLED)) return std::nullopt;
+    if (FAILED(shown)) throw std::runtime_error("The Windows open dialog failed");
+
+    ComPtr<IShellItem> item;
+    if (FAILED(dialog->GetResult(&item))) throw std::runtime_error("No library was selected");
+    PWSTR path = nullptr;
+    if (FAILED(item->GetDisplayName(SIGDN_FILESYSPATH, &path))) {
+        throw std::runtime_error("Unable to read the selected library path");
+    }
+    const std::filesystem::path result(path);
+    CoTaskMemFree(path);
+    return result;
+}
+
+std::optional<std::filesystem::path> readRegistryPath(
+    const HKEY root, const wchar_t* key, const wchar_t* name)
+{
+    DWORD byteCount = 0;
+    if (RegGetValueW(root, key, name, RRF_RT_REG_SZ, nullptr, nullptr, &byteCount) != ERROR_SUCCESS ||
+        byteCount < sizeof(wchar_t)) {
+        return std::nullopt;
+    }
+    std::wstring value(byteCount / sizeof(wchar_t), L'\0');
+    if (RegGetValueW(root, key, name, RRF_RT_REG_SZ, nullptr, value.data(), &byteCount) !=
+        ERROR_SUCCESS) {
+        return std::nullopt;
+    }
+    while (!value.empty() && value.back() == L'\0') value.pop_back();
+    return value.empty() ? std::nullopt
+                         : std::optional<std::filesystem::path>(std::filesystem::path(value));
+}
+
+std::optional<std::filesystem::path> executableDirectory()
+{
+    std::vector<wchar_t> path(32768U);
+    const auto length = GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
+    if (length == 0U || length >= path.size()) return std::nullopt;
+    return std::filesystem::path(path.data(), path.data() + length).parent_path();
+}
+
+bool isWarcraftDirectory(const std::filesystem::path& path)
+{
+    return !path.empty() && std::filesystem::exists(path / L".build.info");
+}
+
+bool isCascLibrary(const std::filesystem::path& path)
+{
+    return !path.empty() && std::filesystem::is_regular_file(path);
+}
+
 std::optional<std::filesystem::path> saveFileDialog(
     HWND owner,
     const std::wstring_view title,
@@ -197,6 +291,7 @@ int App::run(
     const bool smokeTest)
 {
     if (!initializeFactories() || !createWindow(instance, smokeTest ? SW_HIDE : showCommand)) return 1;
+    if (!smokeTest) loadAssetSettings(true);
     if (startupMap) loadMap(*startupMap);
     if (smokeTest) {
         showHelp_ = true;
@@ -387,6 +482,13 @@ LRESULT App::handleMessage(const UINT message, const WPARAM wParam, const LPARAM
         return 0;
     }
     case WM_KEYDOWN:
+        if (wParam == VK_ESCAPE && showAssets_) {
+            showAssets_ = false;
+            focused_ = Target::Assets;
+            updateEditControls();
+            InvalidateRect(window_, nullptr, FALSE);
+            return 0;
+        }
         if (wParam == VK_ESCAPE && showHelp_) {
             showHelp_ = false;
             focused_ = Target::Help;
@@ -395,6 +497,7 @@ LRESULT App::handleMessage(const UINT message, const WPARAM wParam, const LPARAM
             return 0;
         }
         if (wParam == VK_F1) {
+            showAssets_ = false;
             showHelp_ = true;
             focused_ = Target::HelpClose;
             updateEditControls();
@@ -600,9 +703,9 @@ App::Layout App::calculateLayout() const
     for (std::size_t index = 0; index < layout.lightEdits.size(); ++index) {
         layout.lightEdits[index] = D2D1::RectF(
             optionLeft + static_cast<float>(index) * (editWidth + 22.0F),
-            layout.patternCard.top + 181.0F,
+            layout.patternCard.top + 202.0F,
             optionLeft + static_cast<float>(index) * (editWidth + 22.0F) + editWidth,
-            layout.patternCard.top + 217.0F);
+            layout.patternCard.top + 236.0F);
     }
 
     layout.outputCard = D2D1::RectF(margin, contentTop + 388.0F,
@@ -628,14 +731,31 @@ App::Layout App::calculateLayout() const
                                   layout.previewCard.right - 168.0F, actionsTop + 40.0F);
     layout.saveMap = D2D1::RectF(layout.previewCard.right - 158.0F, actionsTop,
                                  layout.previewCard.right - 18.0F, actionsTop + 40.0F);
-    layout.testMode = D2D1::RectF(size.width - 386.0F, 29.0F, size.width - 284.0F, 61.0F);
-    layout.help = D2D1::RectF(size.width - 274.0F, 29.0F, size.width - 184.0F, 61.0F);
+    layout.testMode = D2D1::RectF(size.width - 326.0F, 29.0F, size.width - 214.0F, 61.0F);
+    layout.assets = D2D1::RectF(size.width - 204.0F, 29.0F, size.width - 112.0F, 61.0F);
+    layout.help = D2D1::RectF(size.width - 102.0F, 29.0F, size.width - 28.0F, 61.0F);
     const float helpWidth = std::min(760.0F, size.width - 80.0F);
     const float helpHeight = std::min(570.0F, size.height - 80.0F);
     const float helpLeft = (size.width - helpWidth) / 2.0F;
     const float helpTop = (size.height - helpHeight) / 2.0F;
     layout.helpClose = D2D1::RectF(helpLeft + helpWidth - 120.0F, helpTop + helpHeight - 58.0F,
                                    helpLeft + helpWidth - 24.0F, helpTop + helpHeight - 20.0F);
+    const float assetsWidth = std::min(760.0F, size.width - 80.0F);
+    const float assetsHeight = std::min(410.0F, size.height - 80.0F);
+    const float assetsLeft = (size.width - assetsWidth) / 2.0F;
+    const float assetsTop = (size.height - assetsHeight) / 2.0F;
+    layout.assetsWarcraftBrowse = D2D1::RectF(
+        assetsLeft + assetsWidth - 132.0F, assetsTop + 116.0F,
+        assetsLeft + assetsWidth - 24.0F, assetsTop + 154.0F);
+    layout.assetsCascBrowse = D2D1::RectF(
+        assetsLeft + assetsWidth - 132.0F, assetsTop + 215.0F,
+        assetsLeft + assetsWidth - 24.0F, assetsTop + 253.0F);
+    layout.assetsAutoDetect = D2D1::RectF(
+        assetsLeft + 24.0F, assetsTop + assetsHeight - 60.0F,
+        assetsLeft + 152.0F, assetsTop + assetsHeight - 22.0F);
+    layout.assetsClose = D2D1::RectF(
+        assetsLeft + assetsWidth - 120.0F, assetsTop + assetsHeight - 60.0F,
+        assetsLeft + assetsWidth - 24.0F, assetsTop + assetsHeight - 22.0F);
     layout.status = D2D1::RectF(margin, size.height - 47.0F, size.width - margin, size.height - 16.0F);
     return layout;
 }
@@ -645,7 +765,7 @@ void App::updateEditControls()
     if (window_ == nullptr) return;
     const auto layout = calculateLayout();
     const float scale = static_cast<float>(dpi_) / 96.0F;
-    const bool visible = !testMode_ && !showHelp_;
+    const bool visible = !testMode_ && !showHelp_ && !showAssets_;
     for (std::size_t index = 0; index < lightEdits_.size(); ++index) {
         if (lightEdits_[index] == nullptr) continue;
         const auto& rectangle = layout.lightEdits[index];
@@ -663,7 +783,15 @@ App::Target App::hitTest(const float x, const float y) const
 {
     const auto layout = calculateLayout();
     if (showHelp_) return contains(layout.helpClose, x, y) ? Target::HelpClose : Target::None;
+    if (showAssets_) {
+        if (contains(layout.assetsWarcraftBrowse, x, y)) return Target::AssetsWarcraftBrowse;
+        if (contains(layout.assetsCascBrowse, x, y)) return Target::AssetsCascBrowse;
+        if (contains(layout.assetsAutoDetect, x, y)) return Target::AssetsAutoDetect;
+        if (contains(layout.assetsClose, x, y)) return Target::AssetsClose;
+        return Target::None;
+    }
     if (contains(layout.help, x, y)) return Target::Help;
+    if (contains(layout.assets, x, y)) return Target::Assets;
     if (contains(layout.testMode, x, y)) return Target::TestMode;
     if (contains(layout.browse, x, y)) return Target::Browse;
     if (testMode_) {
@@ -697,13 +825,26 @@ D2D1_POINT_2F App::mousePoint(const LPARAM lParam) const
 
 void App::moveFocus(const bool backwards)
 {
+    if (showAssets_) {
+        constexpr std::array<Target, 4> targets{
+            Target::AssetsWarcraftBrowse, Target::AssetsCascBrowse,
+            Target::AssetsAutoDetect, Target::AssetsClose};
+        auto iterator = std::find(targets.begin(), targets.end(), focused_);
+        std::size_t index = iterator == targets.end()
+            ? 0U : static_cast<std::size_t>(iterator - targets.begin());
+        index = backwards ? (index == 0U ? targets.size() - 1U : index - 1U)
+                          : (index + 1U) % targets.size();
+        focused_ = targets[index];
+        InvalidateRect(window_, nullptr, FALSE);
+        return;
+    }
     if (showHelp_) {
         focused_ = Target::HelpClose;
         InvalidateRect(window_, nullptr, FALSE);
         return;
     }
     const auto available = [this](const Target target) {
-        if (target >= Target::Terrain && target <= Target::IgnoreRegions) return !testMode_;
+        if (target >= Target::Terrain && target <= Target::TerrainSmooth) return !testMode_;
         if (target >= Target::PatternBlack && target <= Target::PatternQuadrants) return testMode_;
         return target >= Target::Browse && target <= Target::Help;
     };
@@ -739,6 +880,14 @@ void App::activate(const Target target)
         honorIgnoreRegions_ = !honorIgnoreRegions_;
         calculationDirty_ = previewKind_ == PreviewKind::Calculated;
         break;
+    case Target::TerrainClassic:
+        terrainGeometry_ = TerrainGeometryMode::ClassicTriangulated;
+        calculationDirty_ = previewKind_ == PreviewKind::Calculated;
+        break;
+    case Target::TerrainSmooth:
+        terrainGeometry_ = TerrainGeometryMode::SmoothSubTile;
+        calculationDirty_ = previewKind_ == PreviewKind::Calculated;
+        break;
     case Target::PatternBlack: selectPattern(Pattern::Black); break;
     case Target::PatternWhite: selectPattern(Pattern::White); break;
     case Target::PatternChecker: selectPattern(Pattern::Checker); break;
@@ -767,9 +916,24 @@ void App::activate(const Target target)
                       : L"Test mode disabled. Full-map shadow preview restored.",
                   StatusKind::Neutral);
         break;
+    case Target::Assets:
+        showHelp_ = false;
+        showAssets_ = true;
+        focused_ = Target::AssetsWarcraftBrowse;
+        updateEditControls();
+        break;
     case Target::Help:
+        showAssets_ = false;
         showHelp_ = true;
         focused_ = Target::HelpClose;
+        updateEditControls();
+        break;
+    case Target::AssetsWarcraftBrowse: chooseWarcraftDirectory(); break;
+    case Target::AssetsCascBrowse: chooseCascLibrary(); break;
+    case Target::AssetsAutoDetect: autoDetectAssetSettings(true); break;
+    case Target::AssetsClose:
+        showAssets_ = false;
+        focused_ = Target::Assets;
         updateEditControls();
         break;
     case Target::HelpClose:
@@ -791,6 +955,129 @@ void App::chooseMap()
         if (selected) loadMap(*selected);
     } catch (const std::exception& error) {
         showError(L"Open map", error);
+    }
+}
+
+void App::loadAssetSettings(const bool persistDetected)
+{
+    warcraftDirectory_ =
+        readRegistryPath(HKEY_CURRENT_USER, SettingsRegistryKey, L"WarcraftDirectory");
+    cascLibrary_ = readRegistryPath(HKEY_CURRENT_USER, SettingsRegistryKey, L"CascLibPath");
+    if (!warcraftDirectory_ || !cascLibrary_) {
+        const auto storedWarcraft = warcraftDirectory_;
+        const auto storedCasc = cascLibrary_;
+        autoDetectAssetSettings(false);
+        if (storedWarcraft) warcraftDirectory_ = storedWarcraft;
+        if (storedCasc) cascLibrary_ = storedCasc;
+        if (persistDetected) saveAssetSettings();
+    }
+    if (!warcraftDirectory_ || !cascLibrary_) {
+        showAssets_ = true;
+        focused_ = Target::AssetsWarcraftBrowse;
+        updateEditControls();
+        setStatus(L"Set the Warcraft III and CascLib locations to calculate object shadows.",
+                  StatusKind::Warning);
+    }
+}
+
+void App::saveAssetSettings() const
+{
+    HKEY key = nullptr;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, SettingsRegistryKey, 0, nullptr, 0, KEY_SET_VALUE,
+                        nullptr, &key, nullptr) != ERROR_SUCCESS) {
+        return;
+    }
+    const auto write = [&](const wchar_t* name,
+                           const std::optional<std::filesystem::path>& value) {
+        if (!value) {
+            RegDeleteValueW(key, name);
+            return;
+        }
+        const auto text = value->wstring();
+        RegSetValueExW(
+            key, name, 0, REG_SZ, reinterpret_cast<const BYTE*>(text.c_str()),
+            static_cast<DWORD>((text.size() + 1U) * sizeof(wchar_t)));
+    };
+    write(L"WarcraftDirectory", warcraftDirectory_);
+    write(L"CascLibPath", cascLibrary_);
+    RegCloseKey(key);
+}
+
+void App::autoDetectAssetSettings(const bool notify)
+{
+    warcraftDirectory_.reset();
+    cascLibrary_.reset();
+
+    const std::array<std::filesystem::path, 2> standardDirectories{
+        L"C:\\Program Files (x86)\\Warcraft III", L"C:\\Program Files\\Warcraft III"};
+    for (const auto& directory : standardDirectories) {
+        if (isWarcraftDirectory(directory)) {
+            warcraftDirectory_ = directory;
+            break;
+        }
+    }
+    if (!warcraftDirectory_) {
+        constexpr std::array<const wchar_t*, 2> registryKeys{
+            L"SOFTWARE\\WOW6432Node\\Blizzard Entertainment\\Warcraft III",
+            L"SOFTWARE\\Blizzard Entertainment\\Warcraft III"};
+        for (const auto* key : registryKeys) {
+            auto candidate = readRegistryPath(HKEY_LOCAL_MACHINE, key, L"InstallPath");
+            if (candidate && std::filesystem::is_regular_file(*candidate)) {
+                candidate = candidate->parent_path();
+            }
+            if (candidate && isWarcraftDirectory(*candidate)) {
+                warcraftDirectory_ = std::move(candidate);
+                break;
+            }
+        }
+    }
+
+    if (const auto directory = executableDirectory()) {
+        const auto candidate = *directory / L"CascLib.dll";
+        if (isCascLibrary(candidate)) cascLibrary_ = candidate;
+    }
+    saveAssetSettings();
+    if (notify) {
+        if (warcraftDirectory_ && cascLibrary_) {
+            setStatus(L"Warcraft III and CascLib locations detected and saved.",
+                      StatusKind::Success);
+        } else {
+            setStatus(L"Auto-detection was incomplete. Choose the missing asset locations.",
+                      StatusKind::Warning);
+        }
+    }
+    InvalidateRect(window_, nullptr, FALSE);
+}
+
+void App::chooseWarcraftDirectory()
+{
+    try {
+        const auto selected = chooseFolderDialog(window_, L"Choose the Warcraft III folder");
+        if (!selected) return;
+        if (!isWarcraftDirectory(*selected)) {
+            throw std::runtime_error("the selected folder does not contain .build.info");
+        }
+        warcraftDirectory_ = *selected;
+        saveAssetSettings();
+        setStatus(L"Warcraft III location saved.", StatusKind::Success);
+    } catch (const std::exception& error) {
+        showError(L"Set Warcraft III location", error);
+    }
+}
+
+void App::chooseCascLibrary()
+{
+    try {
+        const auto selected = openLibraryDialog(window_);
+        if (!selected) return;
+        if (!isCascLibrary(*selected)) {
+            throw std::runtime_error("the selected CascLib.dll does not exist");
+        }
+        cascLibrary_ = *selected;
+        saveAssetSettings();
+        setStatus(L"CascLib location saved.", StatusKind::Success);
+    } catch (const std::exception& error) {
+        showError(L"Set CascLib location", error);
     }
 }
 
@@ -960,16 +1247,24 @@ void App::calculateShadows()
         CompositeAssetProvider assets;
         assets.add(std::make_shared<MapAssetProvider>(source));
         std::shared_ptr<CascAssetProvider> casc;
-        const std::array<std::filesystem::path, 2> gameDirectories{
-            L"C:\\Program Files (x86)\\Warcraft III", L"C:\\Program Files\\Warcraft III"};
-        for (const auto& directory : gameDirectories) {
-            if (!std::filesystem::exists(directory / L".build.info")) continue;
-            casc = std::make_shared<CascAssetProvider>(directory);
-            if (casc->available()) assets.add(casc);
-            break;
+        if (includeDoodads_ || includeDestructibles_) {
+            if (!warcraftDirectory_ || !isWarcraftDirectory(*warcraftDirectory_) ||
+                !cascLibrary_ || !isCascLibrary(*cascLibrary_)) {
+                showAssets_ = true;
+                focused_ = Target::AssetsWarcraftBrowse;
+                updateEditControls();
+                throw std::runtime_error(
+                    "set valid Warcraft III and CascLib locations in Assets");
+            }
+            casc = std::make_shared<CascAssetProvider>(*warcraftDirectory_, *cascLibrary_);
+            if (!casc->available()) {
+                throw std::runtime_error(casc->error() + "; update the paths in Assets");
+            }
+            assets.add(casc);
         }
         GenerationOptions options;
         options.lightDirection = readLightDirection();
+        options.terrainGeometry = terrainGeometry_;
         options.terrain = includeTerrain_;
         options.doodads = includeDoodads_;
         options.destructibles = includeDestructibles_;
@@ -1113,16 +1408,9 @@ void App::paint()
     drawText(L"Warcraft III static-shadow generation workspace",
              D2D1::RectF(83.0F, 52.0F, 520.0F, 75.0F), smallFormat_.Get(), mutedBrush_.Get());
 
-    const auto badgeRect = D2D1::RectF(size.width - 174.0F, 29.0F, size.width - 28.0F, 61.0F);
-    const auto badge = D2D1::RoundedRect(badgeRect, 16.0F, 16.0F);
-    warningBrush_->SetOpacity(0.14F);
-    renderTarget_->FillRoundedRectangle(badge, warningBrush_.Get());
-    warningBrush_->SetOpacity(1.0F);
-    renderTarget_->DrawRoundedRectangle(badge, warningBrush_.Get(), 1.0F);
-    drawText(L"●  FULL GENERATOR", badgeRect, buttonFormat_.Get(), warningBrush_.Get());
-
     drawButton(layout.testMode, testMode_ ? L"Test mode ON" : L"Test mode",
                Target::TestMode, testMode_);
+    drawButton(layout.assets, L"Assets", Target::Assets, false);
     drawButton(layout.help, L"?  Help", Target::Help, false);
 
     drawCard(layout.mapCard);
@@ -1161,18 +1449,21 @@ void App::paint()
                        pattern_ == patterns[index]);
         }
     } else {
-        const std::array<std::wstring_view, 4> labels{
-            L"Terrain", L"Doodads", L"Destructibles", L"IgnoreShadow rects"};
-        const std::array<bool, 4> selected{
-            includeTerrain_, includeDoodads_, includeDestructibles_, honorIgnoreRegions_};
+        const std::array<std::wstring_view, 6> labels{
+            L"Terrain", L"Doodads", L"Destructibles", L"IgnoreShadow rects",
+            L"Classic triangles", L"Smooth sub-tile"};
+        const std::array<bool, 6> selected{
+            includeTerrain_, includeDoodads_, includeDestructibles_, honorIgnoreRegions_,
+            terrainGeometry_ == TerrainGeometryMode::ClassicTriangulated,
+            terrainGeometry_ == TerrainGeometryMode::SmoothSubTile};
         for (std::size_t index = 0; index < labels.size(); ++index) {
             const auto target = static_cast<Target>(static_cast<int>(Target::Terrain) +
                                                     static_cast<int>(index));
             drawButton(layout.calculationOptions[index], labels[index], target, selected[index]);
         }
         drawText(L"Light vector (X, Y, Z) · default 1, 1, -1",
-                 D2D1::RectF(layout.patternCard.left + 16.0F, layout.patternCard.top + 146.0F,
-                             layout.patternCard.right - 16.0F, layout.patternCard.top + 170.0F),
+                 D2D1::RectF(layout.patternCard.left + 16.0F, layout.patternCard.top + 180.0F,
+                             layout.patternCard.right - 16.0F, layout.patternCard.top + 201.0F),
                  smallFormat_.Get(), mutedBrush_.Get());
         constexpr std::array<std::wstring_view, 3> axes{L"X", L"Y", L"Z"};
         for (std::size_t index = 0; index < axes.size(); ++index) {
@@ -1239,13 +1530,6 @@ void App::paint()
                                   D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
         renderTarget_->DrawRectangle(destination, borderBrush_.Get(), 1.0F);
     }
-    const auto originBadge = D2D1::RectF(layout.previewCanvas.left + 10.0F,
-                                         layout.previewCanvas.bottom - 30.0F,
-                                         layout.previewCanvas.left + 260.0F,
-                                         layout.previewCanvas.bottom - 9.0F);
-    drawText(L"Preview top · SHD rows bottom-up", originBadge,
-             smallFormat_.Get(), mutedBrush_.Get());
-
     drawButton(layout.exportShd, L"Export SHD", Target::ExportShd, false);
     drawButton(layout.exportPng, L"Export PNG", Target::ExportPng, false);
     drawButton(layout.buildMap, L"Calculate shadows", Target::BuildMap, false, true);
@@ -1262,6 +1546,65 @@ void App::paint()
     drawText(status_, D2D1::RectF(layout.status.left + 18.0F, layout.status.top,
                                   layout.status.right, layout.status.bottom),
              smallFormat_.Get(), statusBrush);
+
+    if (showAssets_) {
+        backgroundBrush_->SetOpacity(0.86F);
+        renderTarget_->FillRectangle(D2D1::RectF(0.0F, 0.0F, size.width, size.height),
+                                     backgroundBrush_.Get());
+        backgroundBrush_->SetOpacity(1.0F);
+
+        const float assetsWidth = std::min(760.0F, size.width - 80.0F);
+        const float assetsHeight = std::min(410.0F, size.height - 80.0F);
+        const float assetsLeft = (size.width - assetsWidth) / 2.0F;
+        const float assetsTop = (size.height - assetsHeight) / 2.0F;
+        const auto assetsCard = D2D1::RectF(
+            assetsLeft, assetsTop, assetsLeft + assetsWidth, assetsTop + assetsHeight);
+        drawCard(assetsCard);
+
+        drawText(L"Asset locations",
+                 D2D1::RectF(assetsLeft + 24.0F, assetsTop + 20.0F,
+                             assetsCard.right - 24.0F, assetsTop + 56.0F),
+                 titleFormat_.Get(), textBrush_.Get());
+        drawText(
+            L"Locations are auto-detected on first start and saved for your Windows user. "
+            L"Use Browse to choose another Warcraft III installation or CascLib.dll.",
+            D2D1::RectF(assetsLeft + 25.0F, assetsTop + 59.0F,
+                        assetsCard.right - 25.0F, assetsTop + 103.0F),
+            helpBodyFormat_.Get(), mutedBrush_.Get());
+
+        drawText(L"Warcraft III installation",
+                 D2D1::RectF(assetsLeft + 24.0F, assetsTop + 109.0F,
+                             assetsCard.right - 150.0F, assetsTop + 133.0F),
+                 headingFormat_.Get(), textBrush_.Get());
+        drawText(warcraftDirectory_ ? warcraftDirectory_->wstring() : L"Not set",
+                 D2D1::RectF(assetsLeft + 24.0F, assetsTop + 133.0F,
+                             assetsCard.right - 150.0F, assetsTop + 161.0F),
+                 smallFormat_.Get(),
+                 warcraftDirectory_ && isWarcraftDirectory(*warcraftDirectory_)
+                     ? successBrush_.Get() : warningBrush_.Get());
+        drawButton(layout.assetsWarcraftBrowse, L"Browse", Target::AssetsWarcraftBrowse, false);
+
+        drawText(L"CascLib library",
+                 D2D1::RectF(assetsLeft + 24.0F, assetsTop + 204.0F,
+                             assetsCard.right - 150.0F, assetsTop + 228.0F),
+                 headingFormat_.Get(), textBrush_.Get());
+        drawText(cascLibrary_ ? cascLibrary_->wstring() : L"Not set",
+                 D2D1::RectF(assetsLeft + 24.0F, assetsTop + 232.0F,
+                             assetsCard.right - 150.0F, assetsTop + 260.0F),
+                 smallFormat_.Get(),
+                 cascLibrary_ && isCascLibrary(*cascLibrary_)
+                     ? successBrush_.Get() : warningBrush_.Get());
+        drawButton(layout.assetsCascBrowse, L"Browse", Target::AssetsCascBrowse, false);
+
+        drawText(
+            L"Map-imported models remain first priority. Installed Warcraft assets are needed "
+            L"for stock doodad and destructible shadows.",
+            D2D1::RectF(assetsLeft + 24.0F, assetsTop + 282.0F,
+                        assetsCard.right - 24.0F, assetsTop + 326.0F),
+            helpBodyFormat_.Get(), mutedBrush_.Get());
+        drawButton(layout.assetsAutoDetect, L"Auto-detect", Target::AssetsAutoDetect, false);
+        drawButton(layout.assetsClose, L"Close", Target::AssetsClose, false, true);
+    }
 
     if (showHelp_) {
         backgroundBrush_->SetOpacity(0.86F);
@@ -1290,10 +1633,10 @@ void App::paint()
                              helpCard.right - 28.0F, helpTop + 122.0F),
                  headingFormat_.Get(), warningBrush_.Get());
         drawText(
-            L"Choose Terrain, Doodads, and Destructibles independently. Set the light vector "
-            L"(default 1, 1, -1), then choose Calculate shadows. Calculation does not write a "
-            L"map: inspect the newly rendered full preview, choose Save as copy, then select "
-            L"Save to map.",
+            L"Choose Terrain, Doodads, and Destructibles independently. Smooth sub-tile is the "
+            L"default terrain mode; Classic triangles reproduces the version-1 heightfield. "
+            L"Set the light vector (default 1, 1, -1), then choose Calculate shadows. Inspect "
+            L"the rendered preview before choosing Save to map.",
             D2D1::RectF(helpLeft + 28.0F, helpTop + 126.0F,
                         helpCard.right - 28.0F, helpTop + 192.0F),
             helpBodyFormat_.Get(), textBrush_.Get());
@@ -1310,8 +1653,8 @@ void App::paint()
             L"• Alpha terrain tiles should not receive static shadow. Automatic alpha-BLP "
             L"detection is not yet available: temporarily replace the alpha tile, calculate, "
             L"then restore it, or cover it with an IgnoreShadow region.\n"
-            L"• Keep the bundled CascLib.dll beside the executable so installed stock models "
-            L"can be resolved.",
+            L"• Open Assets to set or auto-detect the Warcraft III installation and CascLib.dll "
+            L"used to resolve installed stock models.",
             D2D1::RectF(helpLeft + 28.0F, helpTop + 240.0F,
                         helpCard.right - 28.0F, helpTop + 370.0F),
             helpBodyFormat_.Get(), textBrush_.Get());

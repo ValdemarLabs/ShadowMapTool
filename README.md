@@ -1,6 +1,6 @@
 # ShadowMapTool
 
-ShadowMapTool 1.0 is a native Warcraft III static-shadow generator for `.w3x` and `.w3m` maps. It implements the complete version-1 pipeline described in [`wc3_shadowmap_tool_analysis.md`](../_developer/Shadowmap/wc3_shadowmap_tool_analysis.md): map parsing, terrain and placed-object geometry reconstruction, accelerated ray casting, SHD preview/export, and guarded map output.
+ShadowMapTool 1.1 is a native Warcraft III static-shadow generator for `.w3x` and `.w3m` maps. It implements the pipeline described in [`wc3_shadowmap_tool_analysis.md`](../_developer/Shadowmap/wc3_shadowmap_tool_analysis.md): map parsing, terrain and placed-object geometry reconstruction, accelerated ray casting, SHD preview/export, and guarded map output. Version 1.1 adds a smoother terrain reconstruction while retaining the original version-1 triangulation as a selectable compatibility mode.
 
 The implementation includes:
 
@@ -40,7 +40,9 @@ The Visual Studio 2019 CMake distribution uses the C++20 compatibility mode; new
 
 ## Warcraft assets
 
-Imported map assets are read directly from the map and take priority. The standard Windows build fetches the pinned Unicode CascLib 3.0 dependency and copies `CascLib.dll` beside both executables. Keep the DLL beside the executable when moving the Release folder. Stock doodad/destructible data and models can then be read from an installed Warcraft III directory.
+Imported map assets are read directly from the map and take priority. The standard Windows build fetches the pinned Unicode CascLib 3.0 dependency and copies `CascLib.dll` beside both executables. Stock doodad/destructible data and models can then be read from an installed Warcraft III directory.
+
+On first GUI start, the tool attempts to find the Warcraft III installation and the sibling `CascLib.dll`. If either is not found, the **Assets** panel opens. Both locations can be changed with **Browse** or retried with **Auto-detect**. Valid choices are stored for the current Windows user under `HKCU\Software\ShadowMapTool`; they are not tied to a map or the executable folder.
 
 Alternative asset configurations are:
 
@@ -61,12 +63,16 @@ Launch from Explorer or PowerShell:
 To calculate the complete shadowmap:
 
 1. Browse to a map or drop it onto the window.
-2. Choose whether Terrain, Doodads, and Destructibles contribute shadows.
-3. Keep the default light vector `(1, 1, -1)`, or enter custom X/Y/Z values.
-4. Select **Calculate shadows**. This renders the complete proposed SHD in memory and does not modify or create a map.
-5. Inspect the calculated full-map preview and warning count. Change settings and calculate again if needed.
-6. Keep **Save as copy** selected for the first run, then select **Save to map** and choose the output map.
-7. Open the copy directly in Warcraft III for validation before saving it in World Editor.
+2. Open **Assets** if the Warcraft III installation or `CascLib.dll` location needs changing.
+3. Choose whether Terrain, Doodads, and Destructibles contribute shadows.
+4. Choose **Smooth sub-tile** (default) or **Classic triangles** for terrain geometry.
+5. Keep the default light vector `(1, 1, -1)`, or enter custom X/Y/Z values.
+6. Select **Calculate shadows**. This renders the complete proposed SHD in memory and does not modify or create a map.
+7. Inspect the calculated full-map preview and warning count. Change settings and calculate again if needed.
+8. Keep **Save as copy** selected for the first run, then select **Save to map** and choose the output map.
+9. Open the copy directly in Warcraft III for validation before saving it in World Editor.
+
+**Smooth sub-tile** bilinearly reconstructs each terrain tile on a 2 × 2 sub-grid. This reduces visible diagonal facet/ridge artifacts while keeping the Warcraft heightfield and costs four times as many terrain triangles. **Classic triangles** uses the original two triangles per tile and is provided for version-1 result compatibility and lower geometry cost. Neither option reconstructs Warcraft cliff-art model faces.
 
 The **In place + backup** mode asks for confirmation and preserves a numbered `.w3shadow.bak` copy. Opening a map previews its existing SHD, which can be empty; **Calculate shadows** replaces that view with the newly rendered complete SHD before anything is saved. Changing a calculation option marks the result stale and disables saving until it is recalculated. Diagnostic patterns are only available while **Test mode** is on. **Export SHD** and **Export PNG** export whichever full-map preview is currently shown.
 
@@ -107,6 +113,8 @@ Useful generation options:
 
 - `--asset-dir DIR` supplies an extracted Warcraft-style virtual asset tree;
 - `--light-x N --light-y N --light-z N` changes the default `(1, 1, -1)` light direction;
+- `--smooth-terrain` selects the improved 2 × 2 sub-tile terrain reconstruction (default);
+- `--classic-terrain` selects the original version-1 two-triangles-per-tile reconstruction;
 - `--no-terrain`, `--no-doodads`, and `--no-destructibles` isolate geometry categories;
 - `--no-honor-ignore-shadow` disables `IgnoreShadow...` region clearing;
 - `--in-place` modifies the input only after creating a backup;
@@ -143,8 +151,8 @@ In-game tests on 29 September 2026 confirmed:
 
 The tool stores working previews top-to-bottom and reverses rows only at the Warcraft SHD boundary. Pattern maps created by version 0.2 before this correction are vertically inverted and should be rebuilt.
 
-## Version 1 limitations
+## Current limitations
 
-Version 1 deliberately uses the MDX bind/default pose and treats parsed geoset triangles as opaque. Animated visibility, transparent-material filtering, automatic alpha-tile exclusion, exact cliff-model faces, and World Editor shadow dilation remain compatibility work that requires isolated in-game reference maps. Terrain cliff-layer elevations are included, but the terrain surface is triangulated rather than reconstructed from cliff art models.
+The generator uses the MDX bind/default pose and treats parsed geoset triangles as opaque. Animated visibility, transparent-material filtering, automatic alpha-tile exclusion, exact cliff-model faces, and World Editor shadow dilation remain compatibility work that requires isolated in-game reference maps. Terrain cliff-layer elevations are included. Smooth sub-tile mode improves the heightfield surface but does not reconstruct cliff art models.
 
 The format, archive, parser, BVH, GUI-smoke, production 50,118-placement DOO fixture, current-map DOO/W3B/W3D/W3R, Object Editor shadow override, and terrain-only end-to-end paths are automated. The installed-Warcraft integration test validates stock SLK/profile and MDX resolution when a Warcraft III installation is available.

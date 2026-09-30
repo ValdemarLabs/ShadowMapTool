@@ -139,6 +139,14 @@ void testW3E()
     require(saddle.sampleHeight(96.0F, 32.0F) == 2.5F &&
             saddle.sampleHeight(32.0F, 96.0F) == 2.5F,
             "W3E height sampling does not match the generated terrain triangles");
+    require(saddle.sampleHeight(96.0F, 32.0F, w3shadow::TerrainGeometryMode::SmoothSubTile) ==
+                1.875F &&
+            saddle.sampleHeight(32.0F, 96.0F, w3shadow::TerrainGeometryMode::SmoothSubTile) ==
+                1.875F,
+            "smooth sub-tile terrain did not use bilinear height reconstruction");
+    require(saddle.terrainTriangles().size() == 2U &&
+            saddle.terrainTriangles(w3shadow::TerrainGeometryMode::SmoothSubTile).size() == 8U,
+            "terrain geometry modes produced the wrong triangle counts");
 
     bytes.resize(8);
     require(!w3shadow::parseW3E(bytes), "truncated W3E was accepted");

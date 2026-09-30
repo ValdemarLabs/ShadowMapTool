@@ -35,6 +35,8 @@ private:
         Doodads,
         Destructibles,
         IgnoreRegions,
+        TerrainClassic,
+        TerrainSmooth,
         PatternBlack,
         PatternWhite,
         PatternChecker,
@@ -48,7 +50,12 @@ private:
         BuildMap,
         SaveMap,
         TestMode,
+        Assets,
         Help,
+        AssetsWarcraftBrowse,
+        AssetsCascBrowse,
+        AssetsAutoDetect,
+        AssetsClose,
         HelpClose,
         Count
     };
@@ -57,7 +64,7 @@ private:
         D2D1_RECT_F mapCard{};
         D2D1_RECT_F browse{};
         D2D1_RECT_F patternCard{};
-        std::array<D2D1_RECT_F, 4> calculationOptions{};
+        std::array<D2D1_RECT_F, 6> calculationOptions{};
         std::array<D2D1_RECT_F, 6> patterns{};
         std::array<D2D1_RECT_F, 3> lightEdits{};
         D2D1_RECT_F outputCard{};
@@ -70,7 +77,12 @@ private:
         D2D1_RECT_F buildMap{};
         D2D1_RECT_F saveMap{};
         D2D1_RECT_F testMode{};
+        D2D1_RECT_F assets{};
         D2D1_RECT_F help{};
+        D2D1_RECT_F assetsWarcraftBrowse{};
+        D2D1_RECT_F assetsCascBrowse{};
+        D2D1_RECT_F assetsAutoDetect{};
+        D2D1_RECT_F assetsClose{};
         D2D1_RECT_F helpClose{};
         D2D1_RECT_F status{};
     };
@@ -102,6 +114,11 @@ private:
     void exportPng();
     void calculateShadows();
     void saveShadowMap();
+    void loadAssetSettings(bool persistDetected);
+    void saveAssetSettings() const;
+    void autoDetectAssetSettings(bool notify);
+    void chooseWarcraftDirectory();
+    void chooseCascLibrary();
     [[nodiscard]] Vec3 readLightDirection() const;
 
     void setStatus(std::wstring message, StatusKind kind);
@@ -156,12 +173,16 @@ private:
     Pattern pattern_ = Pattern::Quadrants;
     OutputMode outputMode_ = OutputMode::Copy;
     bool showHelp_ = false;
+    bool showAssets_ = false;
     bool testMode_ = false;
     bool includeTerrain_ = true;
     bool includeDoodads_ = true;
     bool includeDestructibles_ = true;
     bool honorIgnoreRegions_ = true;
+    TerrainGeometryMode terrainGeometry_ = TerrainGeometryMode::SmoothSubTile;
     bool calculationDirty_ = false;
+    std::optional<std::filesystem::path> warcraftDirectory_;
+    std::optional<std::filesystem::path> cascLibrary_;
     PreviewKind previewKind_ = PreviewKind::Empty;
     std::wstring status_ = L"Choose a Warcraft III map to begin.";
     StatusKind statusKind_ = StatusKind::Neutral;

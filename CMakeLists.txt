@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(ShadowMapTool VERSION 1.0.0 LANGUAGES C CXX)
+project(ShadowMapTool VERSION 1.1.0 LANGUAGES C CXX)
 
 include(FetchContent)
 include(CTest)
@@ -111,7 +111,7 @@ if(WIN32)
     )
     target_link_libraries(
         w3shadow-gui
-        PRIVATE w3shadow_core d2d1 dwrite dwmapi ole32 shell32 comdlg32
+        PRIVATE w3shadow_core d2d1 dwrite dwmapi ole32 shell32 comdlg32 advapi32
     )
     if(TARGET casc)
         add_dependencies(w3shadow-gui casc)

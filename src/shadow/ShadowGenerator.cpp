@@ -46,7 +46,9 @@ GenerationResult generateShadowMap(
     result.stats.mapWidth = terrain.info.tileWidth;
     result.stats.mapHeight = terrain.info.tileHeight;
 
-    if (options.terrain) result.sceneTriangles = terrain.terrainTriangles();
+    if (options.terrain) {
+        result.sceneTriangles = terrain.terrainTriangles(options.terrainGeometry);
+    }
 
     std::vector<MapRegion> ignoreShadowRegions;
     if (options.honorIgnoreShadowRegions && archive.contains("war3map.w3r")) {
@@ -176,7 +178,8 @@ GenerationResult generateShadowMap(
                         result.shadow.set(x, y, false);
                         continue;
                     }
-                    const auto height = terrain.sampleHeight(worldX, worldY);
+                    const auto height =
+                        terrain.sampleHeight(worldX, worldY, options.terrainGeometry);
                     const Vec3 origin{worldX, worldY, height + options.rayOriginOffset};
                     const auto occluded = scene.intersects(origin, rayDirection,
                                                            options.rayOriginOffset * 0.25F);

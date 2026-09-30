@@ -52,6 +52,7 @@ struct Options {
     std::optional<float> lightY;
     std::optional<float> lightZ;
     std::optional<std::uint32_t> threads;
+    TerrainGeometryMode terrainGeometry = TerrainGeometryMode::SmoothSubTile;
     bool terrain = true;
     bool doodads = true;
     bool destructibles = true;
@@ -63,10 +64,11 @@ struct Options {
 void printHelp()
 {
     std::cout <<
-        "w3shadow 1.0.0 - Warcraft III static shadow-map generator\n\n"
+        "w3shadow 1.1.0 - Warcraft III static shadow-map generator\n\n"
         "Commands:\n"
         "  generate MAP [--output MAP | --in-place] [--war3-dir DIR] [--asset-dir DIR]\n"
         "               [--light-x N --light-y N --light-z N] [--threads N]\n"
+        "               [--smooth-terrain | --classic-terrain]\n"
         "               [--no-terrain] [--no-doodads] [--no-destructibles]\n"
         "               [--no-honor-ignore-shadow] [--casc-lib FILE]\n"
         "               [--png FILE] [--dump-shadow FILE] [--dump-scene FILE] [--force]\n"
@@ -140,6 +142,10 @@ Options parseOptions(const int argc, char* argv[], const int first)
             options.lightZ = parseFiniteFloat(requireValue(argument), argument);
         } else if (argument == "--threads") {
             options.threads = parsePositiveU32(requireValue(argument), argument);
+        } else if (argument == "--smooth-terrain") {
+            options.terrainGeometry = TerrainGeometryMode::SmoothSubTile;
+        } else if (argument == "--classic-terrain") {
+            options.terrainGeometry = TerrainGeometryMode::ClassicTriangulated;
         } else if (argument == "--no-terrain") {
             options.terrain = false;
         } else if (argument == "--no-doodads") {
@@ -387,6 +393,7 @@ int commandGenerate(const int argc, char* argv[])
     if (options.lightY) generation.lightDirection.y = *options.lightY;
     if (options.lightZ) generation.lightDirection.z = *options.lightZ;
     if (options.threads) generation.threadCount = *options.threads;
+    generation.terrainGeometry = options.terrainGeometry;
     generation.terrain = options.terrain;
     generation.doodads = options.doodads;
     generation.destructibles = options.destructibles;

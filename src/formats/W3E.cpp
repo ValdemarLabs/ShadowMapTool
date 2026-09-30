@@ -115,7 +115,8 @@ const W3EVertex& W3EMap::vertex(const std::uint32_t x, const std::uint32_t y) co
     return vertices[static_cast<std::size_t>(y) * info.vertexWidth + x];
 }
 
-float W3EMap::sampleHeight(const float worldX, const float worldY) const
+float W3EMap::sampleHeight(
+    const float worldX, const float worldY, const TerrainGeometryMode mode) const
 {
     const auto localX = std::clamp((worldX - info.offsetX) / tileSize,
                                    0.0F, static_cast<float>(info.tileWidth));
@@ -129,6 +130,12 @@ float W3EMap::sampleHeight(const float worldX, const float worldY) const
     const auto h10 = vertex(tileX + 1U, tileY).groundHeight;
     const auto h01 = vertex(tileX, tileY + 1U).groundHeight;
     const auto h11 = vertex(tileX + 1U, tileY + 1U).groundHeight;
+    if (mode == TerrainGeometryMode::SmoothSubTile) {
+        return h00 * (1.0F - fractionX) * (1.0F - fractionY) +
+               h10 * fractionX * (1.0F - fractionY) +
+               h01 * (1.0F - fractionX) * fractionY +
+               h11 * fractionX * fractionY;
+    }
     if (((tileX + tileY) & 1U) == 0U) {
         if (fractionX >= fractionY) {
             return h00 * (1.0F - fractionX) + h10 * (fractionX - fractionY) +
@@ -145,9 +152,12 @@ float W3EMap::sampleHeight(const float worldX, const float worldY) const
            h01 * (1.0F - fractionX);
 }
 
-std::vector<Triangle> W3EMap::terrainTriangles() const
+std::vector<Triangle> W3EMap::terrainTriangles(const TerrainGeometryMode mode) const
 {
-    const auto triangleCount = static_cast<std::uint64_t>(info.tileWidth) * info.tileHeight * 2U;
+    const std::uint32_t subdivisions =
+        mode == TerrainGeometryMode::SmoothSubTile ? 2U : 1U;
+    const auto triangleCount = static_cast<std::uint64_t>(info.tileWidth) * info.tileHeight *
+                               subdivisions * subdivisions * 2U;
     if (triangleCount > std::numeric_limits<std::size_t>::max()) {
         throw std::length_error("terrain triangle count overflow");
     }
@@ -157,16 +167,36 @@ std::vector<Triangle> W3EMap::terrainTriangles() const
         for (std::uint32_t x = 0; x < info.tileWidth; ++x) {
             const auto wx = info.offsetX + static_cast<float>(x) * tileSize;
             const auto wy = info.offsetY + static_cast<float>(y) * tileSize;
-            const Vec3 p00{wx, wy, vertex(x, y).groundHeight};
-            const Vec3 p10{wx + tileSize, wy, vertex(x + 1U, y).groundHeight};
-            const Vec3 p01{wx, wy + tileSize, vertex(x, y + 1U).groundHeight};
-            const Vec3 p11{wx + tileSize, wy + tileSize, vertex(x + 1U, y + 1U).groundHeight};
-            if (((x + y) & 1U) == 0U) {
-                result.push_back({p00, p10, p11});
-                result.push_back({p00, p11, p01});
-            } else {
-                result.push_back({p00, p10, p01});
-                result.push_back({p10, p11, p01});
+            const auto h00 = vertex(x, y).groundHeight;
+            const auto h10 = vertex(x + 1U, y).groundHeight;
+            const auto h01 = vertex(x, y + 1U).groundHeight;
+            const auto h11 = vertex(x + 1U, y + 1U).groundHeight;
+            const auto point = [&](const std::uint32_t sx, const std::uint32_t sy) {
+                const auto fx = static_cast<float>(sx) / static_cast<float>(subdivisions);
+                const auto fy = static_cast<float>(sy) / static_cast<float>(subdivisions);
+                const auto height =
+                    mode == TerrainGeometryMode::SmoothSubTile
+                        ? h00 * (1.0F - fx) * (1.0F - fy) +
+                              h10 * fx * (1.0F - fy) +
+                              h01 * (1.0F - fx) * fy +
+                              h11 * fx * fy
+                        : sampleHeight(wx + fx * tileSize, wy + fy * tileSize, mode);
+                return Vec3{wx + fx * tileSize, wy + fy * tileSize, height};
+            };
+            for (std::uint32_t sy = 0; sy < subdivisions; ++sy) {
+                for (std::uint32_t sx = 0; sx < subdivisions; ++sx) {
+                    const auto p00 = point(sx, sy);
+                    const auto p10 = point(sx + 1U, sy);
+                    const auto p01 = point(sx, sy + 1U);
+                    const auto p11 = point(sx + 1U, sy + 1U);
+                    if (((x + y + sx + sy) & 1U) == 0U) {
+                        result.push_back({p00, p10, p11});
+                        result.push_back({p00, p11, p01});
+                    } else {
+                        result.push_back({p00, p10, p01});
+                        result.push_back({p10, p11, p01});
+                    }
+                }
             }
         }
     }

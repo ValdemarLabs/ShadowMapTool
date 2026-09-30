@@ -10,6 +10,11 @@
 
 namespace w3shadow {
 
+enum class TerrainGeometryMode {
+    ClassicTriangulated,
+    SmoothSubTile
+};
+
 struct W3EInfo {
     std::uint32_t version = 0;
     char tileset = 0;
@@ -40,8 +45,11 @@ public:
     std::vector<W3EVertex> vertices;
 
     [[nodiscard]] const W3EVertex& vertex(std::uint32_t x, std::uint32_t y) const;
-    [[nodiscard]] float sampleHeight(float worldX, float worldY) const;
-    [[nodiscard]] std::vector<Triangle> terrainTriangles() const;
+    [[nodiscard]] float sampleHeight(
+        float worldX, float worldY,
+        TerrainGeometryMode mode = TerrainGeometryMode::ClassicTriangulated) const;
+    [[nodiscard]] std::vector<Triangle> terrainTriangles(
+        TerrainGeometryMode mode = TerrainGeometryMode::ClassicTriangulated) const;
 };
 
 struct W3EParseResult {
