@@ -1,6 +1,6 @@
 # ShadowMapTool
 
-ShadowMapTool 1.3 is a native Warcraft III static-shadow generator for `.w3x` and `.w3m` maps. It implements the pipeline described in [`wc3_shadowmap_tool_analysis.md`](../_developer/Shadowmap/wc3_shadowmap_tool_analysis.md): map parsing, terrain and placed-object geometry reconstruction, accelerated ray casting, SHD preview/export, and guarded map output. Version 1.3 adds direct classic MPQ asset loading validated against Warcraft III 1.27b, timestamped session logs, and an expandable in-app About panel. Selectable 1x, 2x, and 4x edge supersampling, smoother terrain reconstruction, and original version-1 triangulation remain independently selectable.
+ShadowMapTool 1.3 is a native Warcraft III static-shadow generator for `.w3x` and `.w3m` maps. It implements the pipeline described in [`wc3_shadowmap_tool_analysis.md`](docs/wc3_shadowmap_tool_analysis.md): map parsing, terrain and placed-object geometry reconstruction, accelerated ray casting, SHD preview/export, and guarded map output. Version 1.3 adds direct classic MPQ asset loading validated against Warcraft III 1.27b, timestamped session logs, and an expandable in-app About panel. Selectable 1x, 2x, and 4x edge supersampling, smoother terrain reconstruction, and original version-1 triangulation remain independently selectable.
 
 The implementation includes:
 
@@ -36,6 +36,22 @@ Outputs:
 
 - `build/Release/w3shadow-gui.exe` — Windows desktop application;
 - `build/Release/w3shadow.exe` — command-line application.
+
+Create the curated public Windows package after a successful build and test run:
+
+```powershell
+.\scripts\build-release.ps1
+```
+
+This writes `dist/ShadowMapTool-1.3.0-win64.zip` and `dist/SHA256SUMS.txt`. The package contains only the GUI, CLI, runtime CascLib DLL, README, and third-party notices. Do not publish the whole `build/Release` directory: it also contains the test executable, static development library, and generated session logs.
+
+## Branches and releases
+
+- `dev` is the integration branch for active work and pull requests.
+- `main` contains stable public versions.
+- tags named `v*` build, test, and publish a GitHub release automatically.
+
+Normal changes should be committed to `dev`, validated there, and merged into `main`. A release tag such as `v1.3.0` belongs on the corresponding stable `main` commit.
 
 The Visual Studio 2019 CMake distribution uses the C++20 compatibility mode; newer CMake/toolchains select C++23. The implementation currently needs no post-C++20 language feature.
 
@@ -169,6 +185,6 @@ The tool stores working previews top-to-bottom and reverses rows only at the War
 
 The generator uses the MDX bind/default pose and treats parsed geoset triangles as opaque. Animated visibility, texture-alpha/material filtering, automatic alpha-tile exclusion, exact cliff-model faces, and World Editor post-processing remain compatibility work that requires isolated in-game reference maps. Terrain cliff-layer elevations are included. Smooth sub-tile mode improves the heightfield surface but does not reconstruct cliff art models.
 
-The paired 64 x 64 reference maps in `_developer/Shadowmap/shadowmap maps/` establish that SHD orientation and byte polarity are correct, but also quantify the current rendering difference: World Editor writes 2,050 shadowed samples while the version-2 Smooth sub-tile/Fast 1x fixture writes 4,631. Their intersection-over-union is 29.4%. Classic triangles at Fast 1x is somewhat closer on this mixed scene (33.0%), so Smooth sub-tile should be understood as a terrain-facet reduction feature, not a World Editor matching mode. The remaining difference is consistent with World Editor selecting posed/visible/material-aware model surfaces and handling cliff geometry differently; further behavior changes need isolated terrain, cliff, opaque-model, and alpha-tested-model reference pairs rather than tuning to this single mixed map.
+The paired 64 x 64 reference maps in `tests/fixtures/reference-maps/` establish that SHD orientation and byte polarity are correct, but also quantify the current rendering difference: World Editor writes 2,050 shadowed samples while the version-2 Smooth sub-tile/Fast 1x fixture writes 4,631. Their intersection-over-union is 29.4%. Classic triangles at Fast 1x is somewhat closer on this mixed scene (33.0%), so Smooth sub-tile should be understood as a terrain-facet reduction feature, not a World Editor matching mode. The remaining difference is consistent with World Editor selecting posed/visible/material-aware model surfaces and handling cliff geometry differently; further behavior changes need isolated terrain, cliff, opaque-model, and alpha-tested-model reference pairs rather than tuning to this single mixed map.
 
 The format, archive, parser, BVH, GUI-smoke, production 50,118-placement DOO fixture, current-map DOO/W3B/W3D/W3R, Object Editor shadow override, and terrain-only end-to-end paths are automated. The installed-Warcraft integration test validates stock SLK/profile and MDX resolution when a Warcraft III installation is available.

@@ -1,5 +1,8 @@
 /build/
 /out/
+/dist/
+/logs/
+.vs/
 *.w3shadow.tmp*
 *.w3shadow.bak*
 

@@ -101,7 +101,7 @@ else()
     target_compile_options(w3shadow PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
 endif()
 
-install(TARGETS w3shadow RUNTIME DESTINATION bin)
+install(TARGETS w3shadow RUNTIME DESTINATION .)
 
 if(WIN32)
     add_executable(w3shadow-gui WIN32
@@ -129,8 +129,14 @@ if(WIN32)
         target_compile_options(w3shadow-gui PRIVATE /W4 /permissive- /EHsc /utf-8)
         target_link_options(w3shadow-gui PRIVATE /MANIFEST:NO)
     endif()
-    install(TARGETS w3shadow-gui RUNTIME DESTINATION bin)
+    install(TARGETS w3shadow-gui RUNTIME DESTINATION .)
 endif()
+
+if(TARGET casc)
+    install(FILES $<TARGET_FILE:casc> DESTINATION .)
+endif()
+
+install(FILES README.md THIRD_PARTY_NOTICES.md DESTINATION .)
 
 if(BUILD_TESTING)
     add_executable(w3shadow_tests tests/TestMain.cpp)
@@ -141,15 +147,32 @@ if(BUILD_TESTING)
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     $<TARGET_FILE:casc> $<TARGET_FILE_DIR:w3shadow_tests>)
     endif()
-    target_compile_definitions(
-        w3shadow_tests
-        PRIVATE
-            W3SHADOW_FIXTURE_MAP="${CMAKE_CURRENT_SOURCE_DIR}/../WC3_Database/WC3_default/DefaultMap.w3m"
-            W3SHADOW_DOO_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../DoodadHider/_reference/war3map.doo"
-            W3SHADOW_CURRENT_MAP_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../ShadowMap_tests/Epic Quests.w3x"
-            W3SHADOW_WE_SHADOW_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../_developer/Shadowmap/shadowmap maps/shadowmaptest_native.w3x"
-            W3SHADOW_TOOL_SHADOW_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../_developer/Shadowmap/shadowmap maps/shadowmaptest.shadowed_v2.w3x"
+    set(W3SHADOW_REFERENCE_DIR
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/reference-maps")
+    set(W3SHADOW_FIXTURE_MAP
+        "${W3SHADOW_REFERENCE_DIR}/shadowmaptest_native.w3x")
+    set(W3SHADOW_WE_SHADOW_FIXTURE
+        "${W3SHADOW_REFERENCE_DIR}/shadowmaptest_native.w3x")
+    set(W3SHADOW_TOOL_SHADOW_FIXTURE
+        "${W3SHADOW_REFERENCE_DIR}/shadowmaptest.shadowed_v2.w3x")
+    target_compile_definitions(w3shadow_tests PRIVATE
+        W3SHADOW_FIXTURE_MAP="${W3SHADOW_FIXTURE_MAP}"
+        W3SHADOW_WE_SHADOW_FIXTURE="${W3SHADOW_WE_SHADOW_FIXTURE}"
+        W3SHADOW_TOOL_SHADOW_FIXTURE="${W3SHADOW_TOOL_SHADOW_FIXTURE}"
     )
+
+    set(SHADOWMAPTOOL_DOO_FIXTURE "" CACHE FILEPATH
+        "Optional production war3map.doo fixture")
+    set(SHADOWMAPTOOL_CURRENT_MAP_FIXTURE "" CACHE FILEPATH
+        "Optional full-map integration fixture")
+    if(SHADOWMAPTOOL_DOO_FIXTURE AND EXISTS "${SHADOWMAPTOOL_DOO_FIXTURE}")
+        target_compile_definitions(w3shadow_tests PRIVATE
+            W3SHADOW_DOO_FIXTURE="${SHADOWMAPTOOL_DOO_FIXTURE}")
+    endif()
+    if(SHADOWMAPTOOL_CURRENT_MAP_FIXTURE AND EXISTS "${SHADOWMAPTOOL_CURRENT_MAP_FIXTURE}")
+        target_compile_definitions(w3shadow_tests PRIVATE
+            W3SHADOW_CURRENT_MAP_FIXTURE="${SHADOWMAPTOOL_CURRENT_MAP_FIXTURE}")
+    endif()
     set_target_properties(w3shadow_tests PROPERTIES
         CXX_STANDARD ${W3SHADOW_CXX_STANDARD}
         CXX_STANDARD_REQUIRED YES
@@ -163,21 +186,15 @@ if(BUILD_TESTING)
     endif()
 
     add_test(NAME w3shadow_unit_tests COMMAND w3shadow_tests)
-    add_test(
-        NAME w3shadow_inspect_default_map
-        COMMAND w3shadow inspect "${CMAKE_CURRENT_SOURCE_DIR}/../WC3_Database/WC3_default/DefaultMap.w3m"
-    )
+    add_test(NAME w3shadow_inspect_reference_map
+        COMMAND w3shadow inspect "${W3SHADOW_FIXTURE_MAP}")
     if(WIN32)
-        add_test(
-            NAME w3shadow_gui_smoke
-            COMMAND w3shadow-gui --smoke-test
-                    "${CMAKE_CURRENT_SOURCE_DIR}/../WC3_Database/WC3_default/DefaultMap.w3m"
-        )
-        add_test(
-            NAME w3shadow_gui_current_map_smoke
-            COMMAND w3shadow-gui --smoke-test
-                    "${CMAKE_CURRENT_SOURCE_DIR}/../ShadowMap_tests/Epic Quests.w3x"
-        )
+        add_test(NAME w3shadow_gui_smoke
+            COMMAND w3shadow-gui --smoke-test "${W3SHADOW_FIXTURE_MAP}")
+        if(SHADOWMAPTOOL_CURRENT_MAP_FIXTURE AND EXISTS "${SHADOWMAPTOOL_CURRENT_MAP_FIXTURE}")
+            add_test(NAME w3shadow_gui_current_map_smoke
+                COMMAND w3shadow-gui --smoke-test "${SHADOWMAPTOOL_CURRENT_MAP_FIXTURE}")
+        endif()
     endif()
 endif()
 
