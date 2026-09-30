@@ -2,6 +2,8 @@
 
 ShadowMapTool 1.3 is a native Warcraft III static-shadow generator for `.w3x` and `.w3m` maps. It implements the pipeline described in [`wc3_shadowmap_tool_analysis.md`](docs/wc3_shadowmap_tool_analysis.md): map parsing, terrain and placed-object geometry reconstruction, accelerated ray casting, SHD preview/export, and guarded map output. Version 1.3 adds direct classic MPQ asset loading validated against Warcraft III 1.27b, timestamped session logs, and an expandable in-app About panel. Selectable 1x, 2x, and 4x edge supersampling, smoother terrain reconstruction, and original version-1 triangulation remain independently selectable.
 
+See [`CHANGELOG.md`](CHANGELOG.md) for the version history and current compatibility limitations.
+
 The implementation includes:
 
 - bounds-checked W3E v11/v12 terrain, DOO v7/v8/v13 placement, W3D/W3B v1-v3 custom-object and skin data, W3R v5/v7 region, and MDX geometry readers;
@@ -43,7 +45,7 @@ Create the curated public Windows package after a successful build and test run:
 .\scripts\build-release.ps1
 ```
 
-This writes `dist/ShadowMapTool-1.3.0-win64.zip` and `dist/SHA256SUMS.txt`. The package contains only the GUI, CLI, runtime CascLib DLL, README, and third-party notices. Do not publish the whole `build/Release` directory: it also contains the test executable, static development library, and generated session logs.
+This writes `dist/ShadowMapTool-1.3.0-win64.zip` and `dist/SHA256SUMS.txt`. The package contains only the GUI, CLI, runtime CascLib DLL, README, changelog, and third-party notices. Do not publish the whole `build/Release` directory: it also contains the test executable, static development library, and generated session logs.
 
 ## Branches and releases
 

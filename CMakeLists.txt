@@ -136,7 +136,7 @@ if(TARGET casc)
     install(FILES $<TARGET_FILE:casc> DESTINATION .)
 endif()
 
-install(FILES README.md THIRD_PARTY_NOTICES.md DESTINATION .)
+install(FILES README.md CHANGELOG.md THIRD_PARTY_NOTICES.md DESTINATION .)
 
 if(BUILD_TESTING)
     add_executable(w3shadow_tests tests/TestMain.cpp)

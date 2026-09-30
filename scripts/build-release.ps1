@@ -58,6 +58,7 @@ $files = @(
     (Join-Path $binaryDir "w3shadow.exe"),
     (Join-Path $binaryDir "CascLib.dll"),
     (Join-Path $projectRoot "README.md"),
+    (Join-Path $projectRoot "CHANGELOG.md"),
     (Join-Path $projectRoot "THIRD_PARTY_NOTICES.md")
 )
 foreach ($file in $files) {
