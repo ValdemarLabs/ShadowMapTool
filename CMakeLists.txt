@@ -65,6 +65,7 @@ add_library(w3shadow_core
     src/shadow/Pattern.cpp
     src/shadow/ShadowGenerator.cpp
     src/shadow/ShadowMap.cpp
+    src/terrain/TerrainAssets.cpp
     src/util/FileIO.cpp
 )
 

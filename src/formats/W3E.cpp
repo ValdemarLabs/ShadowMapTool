@@ -3,6 +3,7 @@
 #include "util/BinaryReader.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -43,12 +44,18 @@ W3EParseResult parseImpl(const std::span<const std::byte> bytes)
     if (!checkedIdBytes(groundCount, idBytes)) {
         throw std::runtime_error("W3E parse error: invalid ground tile count");
     }
-    reader.skip(idBytes, "ground tile list");
+    map.groundTilesets.reserve(groundCount);
+    for (std::uint32_t index = 0; index < groundCount; ++index) {
+        map.groundTilesets.push_back(reader.readTag("ground tile id"));
+    }
     const auto cliffCount = reader.readU32("cliff tile count");
     if (!checkedIdBytes(cliffCount, idBytes)) {
         throw std::runtime_error("W3E parse error: invalid cliff tile count");
     }
-    reader.skip(idBytes, "cliff tile list");
+    map.cliffTilesets.reserve(cliffCount);
+    for (std::uint32_t index = 0; index < cliffCount; ++index) {
+        map.cliffTilesets.push_back(reader.readTag("cliff tile id"));
+    }
 
     map.info.vertexWidth = reader.readU32("terrain width");
     map.info.vertexHeight = reader.readU32("terrain height");
@@ -196,6 +203,77 @@ std::vector<Triangle> W3EMap::terrainTriangles(const TerrainGeometryMode mode) c
                         result.push_back({p00, p10, p01});
                         result.push_back({p10, p11, p01});
                     }
+                }
+            }
+        }
+    }
+    return result;
+}
+
+std::uint8_t W3EMap::groundTextureAt(const float worldX, const float worldY) const
+{
+    const auto localX = std::clamp((worldX - info.offsetX) / tileSize,
+                                   0.0F, static_cast<float>(info.tileWidth) - 0.0001F);
+    const auto localY = std::clamp((worldY - info.offsetY) / tileSize,
+                                   0.0F, static_cast<float>(info.tileHeight) - 0.0001F);
+    return vertex(static_cast<std::uint32_t>(localX),
+                  static_cast<std::uint32_t>(localY)).groundTexture;
+}
+
+std::vector<Triangle> W3EMap::cliffWallTriangles() const
+{
+    std::vector<Triangle> result;
+    struct Cut { Vec3 low; Vec3 high; };
+    // W3E cliff layers are discrete 128-unit steps. The heightfield alone turns
+    // those steps into broad ramps. Per-tile layer contours restore the vertical
+    // occluding silhouette without depending on a particular classic/HD art set.
+    for (std::uint32_t y = 0; y < info.tileHeight; ++y) {
+        for (std::uint32_t x = 0; x < info.tileWidth; ++x) {
+            const std::array<const W3EVertex*, 4> corners{
+                &vertex(x, y), &vertex(x + 1U, y),
+                &vertex(x + 1U, y + 1U), &vertex(x, y + 1U)};
+            const auto minimum = std::min({corners[0]->cliffLayer, corners[1]->cliffLayer,
+                                           corners[2]->cliffLayer, corners[3]->cliffLayer});
+            const auto maximum = std::max({corners[0]->cliffLayer, corners[1]->cliffLayer,
+                                           corners[2]->cliffLayer, corners[3]->cliffLayer});
+            if (minimum == maximum) continue;
+            const auto wx = info.offsetX + static_cast<float>(x) * tileSize;
+            const auto wy = info.offsetY + static_cast<float>(y) * tileSize;
+            const std::array<Vec3, 4> positions{
+                Vec3{wx, wy, corners[0]->groundHeight},
+                Vec3{wx + tileSize, wy, corners[1]->groundHeight},
+                Vec3{wx + tileSize, wy + tileSize, corners[2]->groundHeight},
+                Vec3{wx, wy + tileSize, corners[3]->groundHeight}};
+            for (std::uint8_t level = static_cast<std::uint8_t>(minimum + 1U);
+                 level <= maximum; ++level) {
+                std::vector<Cut> cuts;
+                cuts.reserve(4U);
+                for (std::size_t edge = 0; edge < 4U; ++edge) {
+                    const auto next = (edge + 1U) % 4U;
+                    const auto a = corners[edge]->cliffLayer;
+                    const auto b = corners[next]->cliffLayer;
+                    if ((a < level) == (b < level)) continue;
+                    const auto t = (static_cast<float>(level) - 0.5F - static_cast<float>(a)) /
+                                   (static_cast<float>(b) - static_cast<float>(a));
+                    const auto clamped = std::clamp(t, 0.0F, 1.0F);
+                    const auto xPos = positions[edge].x +
+                                      (positions[next].x - positions[edge].x) * clamped;
+                    const auto yPos = positions[edge].y +
+                                      (positions[next].y - positions[edge].y) * clamped;
+                    const auto low = std::min(positions[edge].z, positions[next].z);
+                    const auto high = std::max(positions[edge].z, positions[next].z);
+                    cuts.push_back({{xPos, yPos, low}, {xPos, yPos, high}});
+                }
+                const auto addSegment = [&](const Cut& a, const Cut& b) {
+                    result.push_back({a.low, b.low, b.high});
+                    result.push_back({a.low, b.high, a.high});
+                };
+                if (cuts.size() == 2U) {
+                    addSegment(cuts[0], cuts[1]);
+                } else if (cuts.size() == 4U) {
+                    // Saddle tiles have two independent cliff segments.
+                    addSegment(cuts[0], cuts[1]);
+                    addSegment(cuts[2], cuts[3]);
                 }
             }
         }

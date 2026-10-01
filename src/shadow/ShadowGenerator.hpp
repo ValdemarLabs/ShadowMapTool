@@ -12,16 +12,24 @@
 
 namespace w3shadow {
 
+enum class ShadowCoverageMode {
+    ClassicMajority,
+    SoftDither
+};
+
 struct GenerationOptions {
     Vec3 lightDirection{1.0F, 1.0F, -1.0F};
     std::uint32_t threadCount = 0;
     std::uint32_t shadowSampleGrid = 4;
     float rayOriginOffset = 0.5F;
     TerrainGeometryMode terrainGeometry = TerrainGeometryMode::SmoothSubTile;
+    ShadowCoverageMode coverageMode = ShadowCoverageMode::SoftDither;
     bool terrain = true;
+    bool cliffWalls = true;
     bool doodads = true;
     bool destructibles = true;
     bool honorIgnoreShadowRegions = true;
+    bool ignoreTransparentTerrain = true;
 };
 
 struct GenerationStats {
@@ -32,10 +40,13 @@ struct GenerationStats {
     std::size_t unresolvedPlacements = 0;
     std::size_t uniqueModels = 0;
     std::size_t triangles = 0;
+    std::size_t cliffWallTriangles = 0;
     std::size_t ignoredRegions = 0;
+    std::size_t transparentTerrainTypes = 0;
     std::uint32_t shadowSampleGrid = 1;
     std::uint64_t rays = 0;
     std::uint64_t shadowedSamples = 0;
+    std::uint64_t partialCoveragePixels = 0;
     double loadSeconds = 0.0;
     double bvhSeconds = 0.0;
     double raySeconds = 0.0;

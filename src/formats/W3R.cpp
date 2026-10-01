@@ -24,8 +24,8 @@ W3RParseResult parseW3R(const std::span<const std::byte> bytes)
         for (std::uint32_t index = 0; index < count; ++index) {
             MapRegion region;
             region.left = reader.readF32("left");
-            region.right = reader.readF32("right");
             region.bottom = reader.readF32("bottom");
+            region.right = reader.readF32("right");
             region.top = reader.readF32("top");
             if (!std::isfinite(region.left) || !std::isfinite(region.right) ||
                 !std::isfinite(region.bottom) || !std::isfinite(region.top)) {

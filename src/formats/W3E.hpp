@@ -42,6 +42,8 @@ struct W3EVertex {
 class W3EMap {
 public:
     W3EInfo info;
+    std::vector<std::string> groundTilesets;
+    std::vector<std::string> cliffTilesets;
     std::vector<W3EVertex> vertices;
 
     [[nodiscard]] const W3EVertex& vertex(std::uint32_t x, std::uint32_t y) const;
@@ -50,6 +52,8 @@ public:
         TerrainGeometryMode mode = TerrainGeometryMode::ClassicTriangulated) const;
     [[nodiscard]] std::vector<Triangle> terrainTriangles(
         TerrainGeometryMode mode = TerrainGeometryMode::ClassicTriangulated) const;
+    [[nodiscard]] std::vector<Triangle> cliffWallTriangles() const;
+    [[nodiscard]] std::uint8_t groundTextureAt(float worldX, float worldY) const;
 };
 
 struct W3EParseResult {

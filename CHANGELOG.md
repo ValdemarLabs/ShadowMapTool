@@ -2,6 +2,24 @@
 
 This changelog records notable ShadowMapTool releases and development changes.
 
+## Development after 1.3.0
+
+### Added
+
+- Added automatic exclusion of fully transparent terrain receivers by resolving the map's W3E ground palette through `TerrainArt\\Terrain.slk` and inspecting the effective imported or installed BLP.
+- Added cliff-layer wall occluders so discrete W3E cliff transitions no longer rely only on sloped heightfield triangles.
+- Added deterministic soft-coverage dithering for 2x and 4x sampling while preserving Warcraft III's binary `0x00`/`0xFF` SHD contract.
+- Added CLI compatibility switches `--hard-edges`, `--no-cliff-walls`, and `--no-alpha-terrain-mask`.
+- Added alpha-terrain, cliff-wall, and corrected W3R coordinate regression coverage.
+
+### Fixed
+
+- Corrected W3R rectangle field order from the erroneous `left, right, bottom, top` interpretation to `left, bottom, right, top`; `IgnoreShadow...` now clears the rectangle placed in World Editor rather than a displaced or transposed area.
+
+### Changed
+
+- Extended calculation logs and CLI summaries with cliff-wall triangle counts, detected transparent terrain types, and partial-coverage pixel counts.
+
 ## [1.3.0] - 1.10.2026
 
 ShadowMapTool 1.3.0 is the first standalone public release.
@@ -108,8 +126,8 @@ ShadowMapTool 1.3.0 is the first standalone public release.
 
 - Model shadows use parsed MDX bind/default-pose geometry and treat parsed geoset triangles as opaque.
 - Animated visibility and texture-alpha/material filtering are not reproduced yet.
-- Automatic alpha-terrain-tile exclusion is not implemented.
-- Exact cliff-art model faces and World Editor shadow post-processing are not reproduced.
+- Fully transparent alpha terrain is excluded; partially transparent/non-BLP terrain requires an `IgnoreShadow` region.
+- Cliff-layer walls are reconstructed, but exact decorative cliff-model protrusions and World Editor shadow post-processing are not reproduced.
 - World Editor and ShadowMapTool results can therefore differ even when SHD orientation and byte polarity are correct.
 
 [1.3.0]: https://github.com/ValdemarLabs/ShadowMapTool/tree/v1.3.0

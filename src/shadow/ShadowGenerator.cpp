@@ -6,6 +6,7 @@
 #include "formats/W3E.hpp"
 #include "geometry/BVH.hpp"
 #include "objects/ObjectDatabase.hpp"
+#include "terrain/TerrainAssets.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -32,6 +33,19 @@ std::optional<std::vector<std::byte>> optionalArchiveFile(
     return archive.contains(path) ? std::optional(archive.read(path)) : std::nullopt;
 }
 
+float coverageThreshold(const std::uint32_t x, const std::uint32_t y)
+{
+    // Integer hash gives a stable, non-repeating threshold without introducing
+    // visible Bayer checkerboards at Warcraft's coarse 32-unit SHD resolution.
+    std::uint32_t value = x * 0x9E3779B9U ^ y * 0x85EBCA6BU ^ 0xC2B2AE35U;
+    value ^= value >> 16U;
+    value *= 0x7FEB352DU;
+    value ^= value >> 15U;
+    value *= 0x846CA68BU;
+    value ^= value >> 16U;
+    return (static_cast<float>(value & 0x00FFFFFFU) + 0.5F) / 16777216.0F;
+}
+
 } // namespace
 
 GenerationResult generateShadowMap(
@@ -53,6 +67,19 @@ GenerationResult generateShadowMap(
 
     if (options.terrain) {
         result.sceneTriangles = terrain.terrainTriangles(options.terrainGeometry);
+        if (options.cliffWalls) {
+            auto walls = terrain.cliffWallTriangles();
+            result.stats.cliffWallTriangles = walls.size();
+            result.sceneTriangles.insert(result.sceneTriangles.end(), walls.begin(), walls.end());
+        }
+    }
+
+    TerrainReceiverMask receiverMask;
+    if (options.ignoreTransparentTerrain) {
+        receiverMask = detectTransparentTerrain(terrain, assets);
+        result.stats.transparentTerrainTypes = receiverMask.detectedTilesets;
+        result.warnings.insert(result.warnings.end(), receiverMask.warnings.begin(),
+                               receiverMask.warnings.end());
     }
 
     std::vector<MapRegion> ignoreShadowRegions;
@@ -163,13 +190,14 @@ GenerationResult generateShadowMap(
         : options.threadCount;
     std::atomic<std::uint32_t> nextRow{0};
     const auto samplesPerPixel = options.shadowSampleGrid * options.shadowSampleGrid;
-    const auto requiredOccluded = samplesPerPixel / 2U + 1U;
     std::atomic<std::uint64_t> shadowed{0};
+    std::atomic<std::uint64_t> partialCoverage{0};
     std::vector<std::thread> workers;
     workers.reserve(workerCount);
     for (std::uint32_t worker = 0; worker < workerCount; ++worker) {
         workers.emplace_back([&] {
             std::uint64_t localShadowed = 0;
+            std::uint64_t localPartialCoverage = 0;
             for (;;) {
                 const auto y = nextRow.fetch_add(1U, std::memory_order_relaxed);
                 if (y >= result.shadow.heightPixels()) break;
@@ -195,6 +223,8 @@ GenerationResult generateShadowMap(
                                     return region.contains(worldX, worldY);
                                 });
                             if (ignored) continue;
+                            if (options.ignoreTransparentTerrain &&
+                                receiverMask.transparentAt(terrain, worldX, worldY)) continue;
                             const auto height =
                                 terrain.sampleHeight(worldX, worldY, options.terrainGeometry);
                             const Vec3 origin{
@@ -205,12 +235,21 @@ GenerationResult generateShadowMap(
                             }
                         }
                     }
-                    const auto occluded = occludedSamples >= requiredOccluded;
+                    if (occludedSamples != 0U && occludedSamples != samplesPerPixel) {
+                        ++localPartialCoverage;
+                    }
+                    const auto coverage = static_cast<float>(occludedSamples) /
+                                          static_cast<float>(samplesPerPixel);
+                    const auto occluded = options.coverageMode == ShadowCoverageMode::SoftDither &&
+                                                   options.shadowSampleGrid > 1U
+                        ? coverage > coverageThreshold(x, y)
+                        : occludedSamples >= samplesPerPixel / 2U + 1U;
                     result.shadow.set(x, y, occluded);
                     if (occluded) ++localShadowed;
                 }
             }
             shadowed.fetch_add(localShadowed, std::memory_order_relaxed);
+            partialCoverage.fetch_add(localPartialCoverage, std::memory_order_relaxed);
         });
     }
     for (auto& worker : workers) worker.join();
@@ -219,6 +258,7 @@ GenerationResult generateShadowMap(
     result.stats.rays = static_cast<std::uint64_t>(result.shadow.widthPixels()) *
                         result.shadow.heightPixels() * samplesPerPixel;
     result.stats.shadowedSamples = shadowed.load();
+    result.stats.partialCoveragePixels = partialCoverage.load();
     return result;
 }
 

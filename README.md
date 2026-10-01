@@ -10,7 +10,8 @@ The implementation includes:
 - stock object-data resolution from SLK data plus current Reforged doodad/destructible skin profiles;
 - map-imported MDX priority, extracted-directory fallback, runtime Warcraft CASC access, and direct classic MPQ access;
 - transformed doodad/destructible geometry, a median-split BVH, model caching, and parallel ray casting;
-- strict-majority 1x, 2x, or 4x shadow-cell supersampling for cleaner binary SHD edges;
+- 1x, 2x, or 4x shadow-cell supersampling with coverage-preserving binary dithering for softer edges;
+- automatic fully transparent terrain-receiver exclusion and cliff-layer wall reconstruction;
 - case-insensitive `IgnoreShadow...` region exclusion;
 - Object Editor `dshd`/`bshd` shadow filtering, including **Has shadow: False**;
 - bottom-to-top Warcraft SHD serialization with normal top-down GUI and PNG previews;
@@ -92,15 +93,15 @@ To calculate the complete shadowmap:
 9. Keep **Save as copy** selected for the first run, then select **Save to map** and choose the output map.
 10. Open the copy directly in Warcraft III for validation before saving it in World Editor.
 
-**Smooth sub-tile** bilinearly reconstructs each terrain tile on a 2 × 2 sub-grid. This reduces visible diagonal facet/ridge artifacts while keeping the Warcraft heightfield and costs four times as many terrain triangles. **Classic triangles** uses the original two triangles per tile and is provided for version-1 result compatibility and lower geometry cost. Neither option reconstructs Warcraft cliff-art model faces.
+**Smooth sub-tile** bilinearly reconstructs each terrain tile on a 2 × 2 sub-grid. This reduces visible diagonal facet/ridge artifacts while keeping the Warcraft heightfield and costs four times as many terrain triangles. **Classic triangles** uses the original two triangles per tile and is provided for version-1 result compatibility and lower geometry cost. In both modes, discrete W3E cliff-layer transitions add vertical occluding faces. These reproduce the important cliff-wall silhouette, but not every protrusion in the decorative classic/HD cliff models.
 
-Edge quality is separate from terrain geometry. **Fast 1x**, **Smooth 2x**, and **Ultra 4x** cast 1, 4, or 16 regularly spaced rays inside every fixed Warcraft SHD cell and classify the cell by strict majority coverage. This reduces stair-stepping and isolated boundary noise while retaining the required binary `0x00`/`0xFF`, four-cells-per-tile SHD format. It cannot increase Warcraft's native shadow texture resolution; Ultra 4x can take roughly sixteen times the ray-casting work of Fast 1x on a large map.
+Edge quality is separate from terrain geometry. **Fast 1x**, **Smooth 2x**, and **Ultra 4x** cast 1, 4, or 16 regularly spaced rays inside every fixed Warcraft SHD cell. Smooth and Ultra retain partial sub-cell coverage through deterministic spatial dithering, producing a softer perceived boundary while still writing only native `0x00`/`0xFF` values. This is the closest useful opacity approximation available in the fixed four-cells-per-tile binary SHD format; it cannot add true alpha values or resolution. Ultra 4x can take roughly sixteen times the ray-casting work of Fast 1x on a large map. CLI users can select the previous strict-majority collapse with `--hard-edges`.
 
 The **In place + backup** mode asks for confirmation and preserves a numbered `.w3shadow.bak` copy. Opening a map previews its existing SHD, which can be empty; **Calculate shadows** replaces that view with the newly rendered complete SHD before anything is saved. Changing a calculation option marks the result stale and disables saving until it is recalculated. Diagnostic patterns are only available while **Test mode** is on. **Export SHD** and **Export PNG** export whichever full-map preview is currently shown.
 
-Regions whose names start with `IgnoreShadow` clear their contents when **IgnoreShadow rects** is enabled. To suppress an unwanted object shadow, set that doodad/destructible's **Has shadow** field to **False** in Object Editor before calculating.
+Regions whose names start with `IgnoreShadow` clear their exact World Editor rectangle contents when **IgnoreShadow rects** is enabled. Version 1.3 parsed the W3R coordinate fields in the wrong order; development builds after 1.3 correct that displaced/transposed exclusion. To suppress an unwanted object shadow, set that doodad/destructible's **Has shadow** field to **False** in Object Editor before calculating.
 
-The historical calculator skipped alpha terrain tiles. Automatic alpha-BLP detection is not implemented yet. Until it is, temporarily replace alpha tiles before calculating and restore them afterward, or cover them with an `IgnoreShadow` region.
+Fully transparent alpha terrain tiles are automatically detected through `TerrainArt\\Terrain.slk` and the effective map-imported or installed BLP, then excluded as shadow receivers. The detector intentionally requires a completely transparent top mip so ordinary terrain textures with an alpha channel are not accidentally removed. The session log warns if terrain metadata is unavailable. Partially transparent terrain and non-BLP terrain replacements should be covered by an `IgnoreShadow` region when they must remain shadow-free.
 
 Open in-app instructions with **? Help** or `F1`. Keyboard users can navigate with `Tab`, activate controls with `Enter` or `Space`, open a map with `Ctrl+O`, calculate with `Ctrl+S`, and close Help with `Esc`.
 
@@ -147,6 +148,9 @@ Useful generation options:
 - `--edge-samples 1|2|4` selects Fast, Smooth, or Ultra edge supersampling (default `4`);
 - `--smooth-terrain` selects the improved 2 × 2 sub-tile terrain reconstruction (default);
 - `--classic-terrain` selects the original version-1 two-triangles-per-tile reconstruction;
+- `--hard-edges` restores the pre-improvement strict-majority sub-cell collapse;
+- `--no-cliff-walls` disables discrete cliff-layer wall occluders;
+- `--no-alpha-terrain-mask` disables fully transparent terrain receiver detection;
 - `--no-terrain`, `--no-doodads`, and `--no-destructibles` isolate geometry categories;
 - `--no-honor-ignore-shadow` disables `IgnoreShadow...` region clearing;
 - `--in-place` modifies the input only after creating a backup;
@@ -185,7 +189,7 @@ The tool stores working previews top-to-bottom and reverses rows only at the War
 
 ## Current limitations
 
-The generator uses the MDX bind/default pose and treats parsed geoset triangles as opaque. Animated visibility, texture-alpha/material filtering, automatic alpha-tile exclusion, exact cliff-model faces, and World Editor post-processing remain compatibility work that requires isolated in-game reference maps. Terrain cliff-layer elevations are included. Smooth sub-tile mode improves the heightfield surface but does not reconstruct cliff art models.
+The generator uses the MDX bind/default pose and still treats parsed geoset triangles as opaque. Animated visibility and texture-alpha/material filtering for doodad/destructible models are not reproduced yet. Fully transparent terrain receivers are excluded automatically, and cliff-layer transitions now contribute vertical occluding faces; exact decorative cliff-model protrusions and World Editor's undocumented post-processing remain compatibility work that needs isolated in-game reference maps.
 
 The paired 64 x 64 reference maps in `tests/fixtures/reference-maps/` establish that SHD orientation and byte polarity are correct, but also quantify the current rendering difference: World Editor writes 2,050 shadowed samples while the version-2 Smooth sub-tile/Fast 1x fixture writes 4,631. Their intersection-over-union is 29.4%. Classic triangles at Fast 1x is somewhat closer on this mixed scene (33.0%), so Smooth sub-tile should be understood as a terrain-facet reduction feature, not a World Editor matching mode. The remaining difference is consistent with World Editor selecting posed/visible/material-aware model surfaces and handling cliff geometry differently; further behavior changes need isolated terrain, cliff, opaque-model, and alpha-tested-model reference pairs rather than tuning to this single mixed map.
 

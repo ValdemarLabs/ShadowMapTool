@@ -1472,14 +1472,17 @@ void App::calculateShadows()
         assets.add(std::make_shared<MapAssetProvider>(source));
         std::shared_ptr<CascAssetProvider> casc;
         std::shared_ptr<LegacyMpqAssetProvider> legacy;
-        if (includeDoodads_ || includeDestructibles_) {
-            if (!hasUsableAssetSettings(warcraftDirectory_, cascLibrary_)) {
-                showAssets_ = true;
-                focused_ = Target::AssetsWarcraftBrowse;
-                updateEditControls();
-                throw std::runtime_error(
-                    "set a valid Warcraft III CASC or classic MPQ location in Assets");
-            }
+        const bool objectAssetsRequired = includeDoodads_ || includeDestructibles_;
+        const bool assetSettingsUsable =
+            hasUsableAssetSettings(warcraftDirectory_, cascLibrary_);
+        if (objectAssetsRequired && !assetSettingsUsable) {
+            showAssets_ = true;
+            focused_ = Target::AssetsWarcraftBrowse;
+            updateEditControls();
+            throw std::runtime_error(
+                "set a valid Warcraft III CASC or classic MPQ location in Assets");
+        }
+        if (assetSettingsUsable) {
             if (isLegacyWarcraftDirectory(*warcraftDirectory_)) {
                 legacy = std::make_shared<LegacyMpqAssetProvider>(*warcraftDirectory_);
                 if (!legacy->available()) {
@@ -1523,6 +1526,9 @@ void App::calculateShadows()
                        << L", unresolved=" << generated.stats.unresolvedPlacements
                        << L", models=" << generated.stats.uniqueModels
                        << L", triangles=" << generated.stats.triangles
+                       << L", cliff-wall-triangles=" << generated.stats.cliffWallTriangles
+                       << L", transparent-terrain-types=" << generated.stats.transparentTerrainTypes
+                       << L", partial-coverage-pixels=" << generated.stats.partialCoveragePixels
                        << L", rays=" << generated.stats.rays
                        << L", seconds=" << std::fixed << std::setprecision(3)
                        << (generated.stats.loadSeconds + generated.stats.bvhSeconds +
@@ -2000,11 +2006,12 @@ void App::paint()
                 L"ShadowMap Tool calculates, previews, exports, and safely writes Warcraft III "
                 L"static war3map.shd data. It reconstructs terrain plus shadow-enabled doodad "
                 L"and destructible geometry, then ray casts a configurable light vector. It "
-                L"offers classic or smoother terrain, 1x/2x/4x edge sampling, IgnoreShadow "
+                L"offers classic or smoother terrain, soft 1x/2x/4x edge coverage, IgnoreShadow "
                 L"regions, source filters, safe copies, and backups. The result remains Warcraft's "
                 L"fixed binary four-cells-per-tile shadowmap rather than a higher-resolution texture. "
-                L"Known limits include opaque bind-pose model geometry, no automatic alpha-tile "
-                L"exclusion, and no reconstruction of Warcraft's decorative cliff-art faces.",
+                L"Transparent terrain receivers are automatically excluded and discrete cliff "
+                L"walls are reconstructed. Exact decorative cliff-model ornament and alpha-tested "
+                L"model materials remain compatibility work.",
                 layout.aboutContents[0], helpBodyFormat_.Get(), textBrush_.Get());
         } else if (aboutSection_ == 1) {
             drawText(
@@ -2062,7 +2069,7 @@ void App::paint()
                              helpCard.right - 28.0F, helpTop + 122.0F),
                  headingFormat_.Get(), warningBrush_.Get());
         drawText(
-            L"Choose shadow sources and terrain mode. Ultra 4x is the default edge quality; "
+            L"Choose shadow sources and terrain mode. Ultra 4x is the default soft-coverage quality; "
             L"Smooth 2x and Fast 1x trade quality for speed. Set the light vector (default "
             L"1, 1, -1), choose Calculate shadows, inspect the rendered preview, then Save to map.",
             D2D1::RectF(helpLeft + 28.0F, helpTop + 126.0F,
@@ -2078,9 +2085,8 @@ void App::paint()
             L"IgnoreShadow rects option is selected.\n"
             L"• To suppress an unwanted doodad shadow, set the doodad's Has shadow field to "
             L"False in Object Editor before calculating.\n"
-            L"• Alpha terrain tiles should not receive static shadow. Automatic alpha-BLP "
-            L"detection is not yet available: temporarily replace the alpha tile, calculate, "
-            L"then restore it, or cover it with an IgnoreShadow region.\n"
+            L"• Fully transparent alpha terrain is detected from its imported/installed BLP and "
+            L"does not receive static shadow. A warning is logged if terrain metadata is unavailable.\n"
             L"• Open Assets to select a current CASC installation plus CascLib.dll, or a classic "
             L"MPQ installation such as 1.27b, used to resolve installed stock models.",
             D2D1::RectF(helpLeft + 28.0F, helpTop + 240.0F,

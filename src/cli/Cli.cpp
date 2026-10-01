@@ -56,10 +56,13 @@ struct Options {
     std::optional<std::uint32_t> threads;
     std::uint32_t shadowSampleGrid = 4;
     TerrainGeometryMode terrainGeometry = TerrainGeometryMode::SmoothSubTile;
+    ShadowCoverageMode coverageMode = ShadowCoverageMode::SoftDither;
     bool terrain = true;
+    bool cliffWalls = true;
     bool doodads = true;
     bool destructibles = true;
     bool honorIgnoreShadowRegions = true;
+    bool ignoreTransparentTerrain = true;
     bool inPlace = false;
     bool force = false;
 };
@@ -72,8 +75,9 @@ void printHelp()
         "  generate MAP [--output MAP | --in-place] [--war3-dir DIR] [--asset-dir DIR]\n"
         "               [--light-x N --light-y N --light-z N] [--threads N]\n"
         "               [--edge-samples 1|2|4]\n"
-        "               [--smooth-terrain | --classic-terrain]\n"
+        "               [--smooth-terrain | --classic-terrain] [--hard-edges]\n"
         "               [--no-terrain] [--no-doodads] [--no-destructibles]\n"
+        "               [--no-cliff-walls] [--no-alpha-terrain-mask]\n"
         "               [--no-honor-ignore-shadow] [--casc-lib FILE]\n"
         "               [--png FILE] [--dump-shadow FILE] [--dump-scene FILE] [--force]\n"
         "  pattern --map-width W --map-height H --pattern NAME --output FILE [--png FILE] [--force]\n"
@@ -157,8 +161,14 @@ Options parseOptions(const int argc, char* argv[], const int first)
             options.terrainGeometry = TerrainGeometryMode::SmoothSubTile;
         } else if (argument == "--classic-terrain") {
             options.terrainGeometry = TerrainGeometryMode::ClassicTriangulated;
+        } else if (argument == "--hard-edges") {
+            options.coverageMode = ShadowCoverageMode::ClassicMajority;
         } else if (argument == "--no-terrain") {
             options.terrain = false;
+        } else if (argument == "--no-cliff-walls") {
+            options.cliffWalls = false;
+        } else if (argument == "--no-alpha-terrain-mask") {
+            options.ignoreTransparentTerrain = false;
         } else if (argument == "--no-doodads") {
             options.doodads = false;
         } else if (argument == "--no-destructibles") {
@@ -423,7 +433,8 @@ int commandGenerate(const int argc, char* argv[])
     const auto warcraftDirectory = options.warcraftDirectory ? options.warcraftDirectory : detectedWarcraftDirectory();
     std::shared_ptr<CascAssetProvider> casc;
     std::shared_ptr<LegacyMpqAssetProvider> legacy;
-    if (warcraftDirectory && (options.doodads || options.destructibles)) {
+    if (warcraftDirectory &&
+        (options.terrain || options.doodads || options.destructibles)) {
         if (isCascWarcraftDirectory(*warcraftDirectory)) {
             casc = std::make_shared<CascAssetProvider>(*warcraftDirectory, options.cascLibrary);
             if (casc->available()) assets.add(casc);
@@ -444,10 +455,13 @@ int commandGenerate(const int argc, char* argv[])
     if (options.threads) generation.threadCount = *options.threads;
     generation.shadowSampleGrid = options.shadowSampleGrid;
     generation.terrainGeometry = options.terrainGeometry;
+    generation.coverageMode = options.coverageMode;
     generation.terrain = options.terrain;
+    generation.cliffWalls = options.cliffWalls;
     generation.doodads = options.doodads;
     generation.destructibles = options.destructibles;
     generation.honorIgnoreShadowRegions = options.honorIgnoreShadowRegions;
+    generation.ignoreTransparentTerrain = options.ignoreTransparentTerrain;
     auto result = generateShadowMap(archive, assets, generation);
     const auto warcraftBytes = result.shadow.warcraftBytes();
 
@@ -467,12 +481,15 @@ int commandGenerate(const int argc, char* argv[])
               << result.stats.resolvedPlacements << " resolved, "
               << result.stats.unresolvedPlacements << " unresolved, "
               << result.stats.uniqueModels << " unique models, "
-              << result.stats.triangles << " triangles\n"
+              << result.stats.triangles << " triangles ("
+              << result.stats.cliffWallTriangles << " cliff-wall), "
+              << result.stats.transparentTerrainTypes << " transparent terrain types\n"
               << "Shadow: " << result.stats.shadowedSamples << '/'
               << static_cast<std::uint64_t>(result.stats.mapWidth) * result.stats.mapHeight * 16U
               << " pixels from " << result.stats.rays << " rays ("
               << result.stats.shadowSampleGrid << 'x' << result.stats.shadowSampleGrid
-              << ") in " << std::fixed << std::setprecision(3) << total << " s"
+              << ", " << result.stats.partialCoveragePixels << " partial-coverage pixels) in "
+              << std::fixed << std::setprecision(3) << total << " s"
               << " (load " << result.stats.loadSeconds << ", BVH " << result.stats.bvhSeconds
               << ", rays " << result.stats.raySeconds << ")\n";
     for (const auto& warning : result.warnings) std::cerr << "WARN: " << warning << '\n';

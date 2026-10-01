@@ -10,6 +10,7 @@
 #include "shadow/Pattern.hpp"
 #include "shadow/ShadowGenerator.hpp"
 #include "shadow/ShadowMap.hpp"
+#include "terrain/TerrainAssets.hpp"
 #include "util/FileIO.hpp"
 
 #include <algorithm>
@@ -23,6 +24,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -38,6 +40,15 @@ void appendU32(std::vector<std::byte>& bytes, const std::uint32_t value)
     bytes.push_back(static_cast<std::byte>((value >> 8U) & 0xFFU));
     bytes.push_back(static_cast<std::byte>((value >> 16U) & 0xFFU));
     bytes.push_back(static_cast<std::byte>((value >> 24U) & 0xFFU));
+}
+
+void writeU32(std::vector<std::byte>& bytes, const std::size_t offset,
+              const std::uint32_t value)
+{
+    require(offset + 4U <= bytes.size(), "test write is out of bounds");
+    for (std::size_t index = 0; index < 4U; ++index) {
+        bytes[offset + index] = static_cast<std::byte>((value >> (index * 8U)) & 0xFFU);
+    }
 }
 
 void appendU16(std::vector<std::byte>& bytes, const std::uint16_t value)
@@ -148,9 +159,61 @@ void testW3E()
     require(saddle.terrainTriangles().size() == 2U &&
             saddle.terrainTriangles(w3shadow::TerrainGeometryMode::SmoothSubTile).size() == 8U,
             "terrain geometry modes produced the wrong triangle counts");
+    saddle.vertices[1].cliffLayer = 3U;
+    saddle.vertices[1].groundHeight = 128.0F;
+    require(!saddle.cliffWallTriangles().empty(),
+            "cliff-layer transition did not produce occluding wall geometry");
 
     bytes.resize(8);
     require(!w3shadow::parseW3E(bytes), "truncated W3E was accepted");
+}
+
+class MemoryAssets final : public w3shadow::AssetProvider {
+public:
+    std::unordered_map<std::string, std::vector<std::byte>> files;
+    std::optional<std::vector<std::byte>> load(
+        const std::string_view path) const override
+    {
+        const auto found = files.find(std::string(path));
+        return found == files.end() ? std::nullopt
+                                    : std::optional<std::vector<std::byte>>(found->second);
+    }
+};
+
+void testTransparentTerrain()
+{
+    const std::string slk =
+        "ID;PWXL;N;E\n"
+        "B;Y2;X3\n"
+        "C;Y1;X1;K\"tileID\"\n"
+        "C;X2;K\"dir\"\n"
+        "C;X3;K\"file\"\n"
+        "C;Y2;X1;K\"Alph\"\n"
+        "C;X2;K\"TerrainArt\"\n"
+        "C;X3;K\"Alpha\"\nE\n";
+    MemoryAssets assets;
+    assets.files["TerrainArt\\Terrain.slk"] = std::vector<std::byte>(
+        reinterpret_cast<const std::byte*>(slk.data()),
+        reinterpret_cast<const std::byte*>(slk.data() + slk.size()));
+    std::vector<std::byte> blp(164U, std::byte{0});
+    blp[0] = std::byte{'B'}; blp[1] = std::byte{'L'};
+    blp[2] = std::byte{'P'}; blp[3] = std::byte{'1'};
+    writeU32(blp, 4U, 1U);   // paletted
+    writeU32(blp, 8U, 8U);   // eight-bit alpha
+    writeU32(blp, 12U, 2U);  // width
+    writeU32(blp, 16U, 2U);  // height
+    writeU32(blp, 28U, 156U);
+    writeU32(blp, 92U, 8U);
+    assets.files["TerrainArt\\Alpha.blp"] = blp;
+
+    w3shadow::W3EMap terrain;
+    terrain.info.vertexWidth = terrain.info.vertexHeight = 2U;
+    terrain.info.tileWidth = terrain.info.tileHeight = 1U;
+    terrain.groundTilesets.push_back("Alph");
+    terrain.vertices.resize(4U);
+    const auto mask = w3shadow::detectTransparentTerrain(terrain, assets);
+    require(mask.detectedTilesets == 1U && mask.transparentAt(terrain, 64.0F, 64.0F),
+            "fully transparent BLP terrain was not excluded as a shadow receiver");
 }
 
 void testGeometryAndFormats()
@@ -432,9 +495,9 @@ void testRegions()
     appendU32(bytes, 5U);
     appendU32(bytes, 1U);
     appendF32(bytes, 512.0F);
+    appendF32(bytes, -64.0F);
     appendF32(bytes, -128.0F);
     appendF32(bytes, 256.0F);
-    appendF32(bytes, -64.0F);
     appendCString(bytes, "IgnoreShadow village");
     appendU32(bytes, 17U);
     appendTag(bytes, "RAhr");
@@ -590,6 +653,7 @@ int main()
         testShadowMap();
         testPatterns();
         testW3E();
+        testTransparentTerrain();
         testGeometryAndFormats();
         testObjectShadowOverride();
         testInstalledWarcraftAssets();
