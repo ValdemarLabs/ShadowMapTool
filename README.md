@@ -46,7 +46,7 @@ Create the curated public Windows package after a successful build and test run:
 .\scripts\build-release.ps1
 ```
 
-This writes `dist/ShadowMapTool-1.3.0-win64.zip` and `dist/SHA256SUMS.txt`. The package contains only the GUI, CLI, runtime CascLib DLL, README, changelog, and third-party notices. Do not publish the whole `build/Release` directory: it also contains the test executable, static development library, and generated session logs.
+This writes `dist/ShadowMapTool-1.3.1-win64.zip` and `dist/SHA256SUMS.txt`. The package contains only the GUI, CLI, runtime CascLib DLL, README, changelog, and third-party notices. Do not publish the whole `build/Release` directory: it also contains the test executable, static development library, and generated session logs.
 
 ## Branches and releases
 
@@ -54,7 +54,7 @@ This writes `dist/ShadowMapTool-1.3.0-win64.zip` and `dist/SHA256SUMS.txt`. The 
 - `main` contains stable public versions.
 - tags named `v*` build, test, and publish a GitHub release automatically.
 
-Normal changes should be committed to `dev`, validated there, and merged into `main`. A release tag such as `v1.3.0` belongs on the corresponding stable `main` commit.
+Normal changes should be committed to `dev`, validated there, and merged into `main`. A release tag such as `v1.3.1` belongs on the corresponding stable `main` commit.
 
 The Visual Studio 2019 CMake distribution uses the C++20 compatibility mode; newer CMake/toolchains select C++23. The implementation currently needs no post-C++20 language feature.
 

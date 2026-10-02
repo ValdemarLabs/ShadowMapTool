@@ -74,7 +74,7 @@ struct Options {
 void printHelp()
 {
     std::cout <<
-        "w3shadow 1.3.0 - Warcraft III static shadow-map generator\n\n"
+        "w3shadow 1.3.1 - Warcraft III static shadow-map generator\n\n"
         "Commands:\n"
         "  generate MAP [--output MAP | --in-place] [--war3-dir DIR] [--asset-dir DIR]\n"
         "               [--light-x N --light-y N --light-z N] [--ray-bias N] [--threads N]\n"

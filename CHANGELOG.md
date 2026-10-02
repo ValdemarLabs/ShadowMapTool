@@ -4,6 +4,8 @@ This changelog records notable ShadowMapTool releases and development changes.
 
 ## 2.10.2026
 
+ShadowMapTool 1.3.1 is a shadow-quality, terrain-masking, and workflow patch release.
+
 ### Added
 
 - Added automatic exclusion of fully transparent terrain receivers by resolving the map's W3E ground palette through `TerrainArt\\Terrain.slk` and inspecting the effective imported or installed BLP.
