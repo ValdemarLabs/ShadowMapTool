@@ -9,13 +9,16 @@
 #include "terrain/TerrainAssets.hpp"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <thread>
 #include <unordered_map>
+#include <vector>
 
 namespace w3shadow {
 namespace {
@@ -33,19 +36,6 @@ std::optional<std::vector<std::byte>> optionalArchiveFile(
     return archive.contains(path) ? std::optional(archive.read(path)) : std::nullopt;
 }
 
-float coverageThreshold(const std::uint32_t x, const std::uint32_t y)
-{
-    // Integer hash gives a stable, non-repeating threshold without introducing
-    // visible Bayer checkerboards at Warcraft's coarse 32-unit SHD resolution.
-    std::uint32_t value = x * 0x9E3779B9U ^ y * 0x85EBCA6BU ^ 0xC2B2AE35U;
-    value ^= value >> 16U;
-    value *= 0x7FEB352DU;
-    value ^= value >> 15U;
-    value *= 0x846CA68BU;
-    value ^= value >> 16U;
-    return (static_cast<float>(value & 0x00FFFFFFU) + 0.5F) / 16777216.0F;
-}
-
 } // namespace
 
 GenerationResult generateShadowMap(
@@ -55,6 +45,20 @@ GenerationResult generateShadowMap(
     if (options.shadowSampleGrid != 1U && options.shadowSampleGrid != 2U &&
         options.shadowSampleGrid != 4U) {
         throw std::invalid_argument("shadow sample grid must be 1, 2, or 4");
+    }
+    if (!std::isfinite(options.rayOriginOffset) || options.rayOriginOffset < 0.0F ||
+        options.rayOriginOffset > 32.0F) {
+        throw std::invalid_argument("ray origin offset must be from 0 to 32");
+    }
+    if (options.gaussianRadius > 3U) {
+        throw std::invalid_argument("Gaussian radius must be from 0 to 3");
+    }
+    if (!std::isfinite(options.coverageThreshold) || options.coverageThreshold < 0.0F ||
+        options.coverageThreshold > 1.0F) {
+        throw std::invalid_argument("coverage threshold must be from 0 to 1");
+    }
+    if (options.minimumShadowIslandPixels > 64U) {
+        throw std::invalid_argument("minimum shadow island size must be from 0 to 64");
     }
     const auto start = Clock::now();
     const auto parsedTerrain = parseW3E(archive.read("war3map.w3e"));
@@ -190,19 +194,23 @@ GenerationResult generateShadowMap(
         : options.threadCount;
     std::atomic<std::uint32_t> nextRow{0};
     const auto samplesPerPixel = options.shadowSampleGrid * options.shadowSampleGrid;
-    std::atomic<std::uint64_t> shadowed{0};
+    const auto shadowWidth = result.shadow.widthPixels();
+    const auto shadowHeight = result.shadow.heightPixels();
+    const auto pixelCount = static_cast<std::size_t>(shadowWidth) * shadowHeight;
+    std::vector<std::uint8_t> coverageSamples(pixelCount, 0U);
+    std::vector<std::uint8_t> receiverAllowed(pixelCount, 1U);
     std::atomic<std::uint64_t> partialCoverage{0};
     std::vector<std::thread> workers;
     workers.reserve(workerCount);
     for (std::uint32_t worker = 0; worker < workerCount; ++worker) {
         workers.emplace_back([&] {
-            std::uint64_t localShadowed = 0;
             std::uint64_t localPartialCoverage = 0;
             for (;;) {
                 const auto y = nextRow.fetch_add(1U, std::memory_order_relaxed);
                 if (y >= result.shadow.heightPixels()) break;
                 for (std::uint32_t x = 0; x < result.shadow.widthPixels(); ++x) {
                     std::uint32_t occludedSamples = 0;
+                    std::uint32_t eligibleSamples = 0;
                     for (std::uint32_t sampleY = 0; sampleY < options.shadowSampleGrid; ++sampleY) {
                         const auto fractionY =
                             (static_cast<float>(sampleY) + 0.5F) /
@@ -225,12 +233,26 @@ GenerationResult generateShadowMap(
                             if (ignored) continue;
                             if (options.ignoreTransparentTerrain &&
                                 receiverMask.transparentAt(terrain, worldX, worldY)) continue;
+                            ++eligibleSamples;
                             const auto height =
                                 terrain.sampleHeight(worldX, worldY, options.terrainGeometry);
-                            const Vec3 origin{
-                                worldX, worldY, height + options.rayOriginOffset};
+                            constexpr float normalStep = 4.0F;
+                            const auto heightLeft = terrain.sampleHeight(
+                                worldX - normalStep, worldY, options.terrainGeometry);
+                            const auto heightRight = terrain.sampleHeight(
+                                worldX + normalStep, worldY, options.terrainGeometry);
+                            const auto heightBottom = terrain.sampleHeight(
+                                worldX, worldY - normalStep, options.terrainGeometry);
+                            const auto heightTop = terrain.sampleHeight(
+                                worldX, worldY + normalStep, options.terrainGeometry);
+                            const auto surfaceNormal = normalized(Vec3{
+                                heightLeft - heightRight, heightBottom - heightTop,
+                                normalStep * 2.0F});
+                            const Vec3 surface{worldX, worldY, height};
+                            const Vec3 origin = surface + surfaceNormal * options.rayOriginOffset +
+                                                rayDirection * (options.rayOriginOffset * 0.25F);
                             if (scene.intersects(origin, rayDirection,
-                                                 options.rayOriginOffset * 0.25F)) {
+                                                 std::max(0.05F, options.rayOriginOffset * 0.25F))) {
                                 ++occludedSamples;
                             }
                         }
@@ -238,26 +260,121 @@ GenerationResult generateShadowMap(
                     if (occludedSamples != 0U && occludedSamples != samplesPerPixel) {
                         ++localPartialCoverage;
                     }
-                    const auto coverage = static_cast<float>(occludedSamples) /
-                                          static_cast<float>(samplesPerPixel);
-                    const auto occluded = options.coverageMode == ShadowCoverageMode::SoftDither &&
-                                                   options.shadowSampleGrid > 1U
-                        ? coverage > coverageThreshold(x, y)
-                        : occludedSamples >= samplesPerPixel / 2U + 1U;
-                    result.shadow.set(x, y, occluded);
-                    if (occluded) ++localShadowed;
+                    const auto index = static_cast<std::size_t>(y) * shadowWidth + x;
+                    coverageSamples[index] = static_cast<std::uint8_t>(occludedSamples);
+                    receiverAllowed[index] = eligibleSamples == 0U ? 0U : 1U;
                 }
             }
-            shadowed.fetch_add(localShadowed, std::memory_order_relaxed);
             partialCoverage.fetch_add(localPartialCoverage, std::memory_order_relaxed);
         });
     }
     for (auto& worker : workers) worker.join();
+
+    const auto rawCoverage = [&](const std::uint32_t x, const std::uint32_t y) {
+        return static_cast<float>(coverageSamples[static_cast<std::size_t>(y) * shadowWidth + x]) /
+               static_cast<float>(samplesPerPixel);
+    };
+    std::vector<float> gaussianKernel(options.gaussianRadius * 2U + 1U, 1.0F);
+    if (options.gaussianRadius > 0U) {
+        const auto order = options.gaussianRadius * 2U;
+        for (std::uint32_t index = 1U; index <= order; ++index) {
+            gaussianKernel[index] = gaussianKernel[index - 1U] *
+                static_cast<float>(order - index + 1U) / static_cast<float>(index);
+        }
+    }
+    for (std::uint32_t y = 0; y < shadowHeight; ++y) {
+        for (std::uint32_t x = 0; x < shadowWidth; ++x) {
+            const auto index = static_cast<std::size_t>(y) * shadowWidth + x;
+            bool occluded = false;
+            if (receiverAllowed[index] != 0U) {
+                if (options.coverageMode == ShadowCoverageMode::CoherentFilter) {
+                    // A configurable binomial approximation of a Gaussian filter
+                    // produces connected, rounded binary contours without dither.
+                    float weightedCoverage = 0.0F;
+                    float totalWeight = 0.0F;
+                    const auto radius = static_cast<int>(options.gaussianRadius);
+                    for (int offsetY = -radius; offsetY <= radius; ++offsetY) {
+                        const auto sampleY = static_cast<int>(y) + offsetY;
+                        if (sampleY < 0 || sampleY >= static_cast<int>(shadowHeight)) continue;
+                        for (int offsetX = -radius; offsetX <= radius; ++offsetX) {
+                            const auto sampleX = static_cast<int>(x) + offsetX;
+                            if (sampleX < 0 || sampleX >= static_cast<int>(shadowWidth)) continue;
+                            const auto weight =
+                                gaussianKernel[static_cast<std::size_t>(offsetX + radius)] *
+                                gaussianKernel[static_cast<std::size_t>(offsetY + radius)];
+                            weightedCoverage += rawCoverage(
+                                static_cast<std::uint32_t>(sampleX),
+                                static_cast<std::uint32_t>(sampleY)) * weight;
+                            totalWeight += weight;
+                        }
+                    }
+                    occluded = totalWeight > 0.0F &&
+                               weightedCoverage / totalWeight >= options.coverageThreshold;
+                } else {
+                    occluded = coverageSamples[index] >= samplesPerPixel / 2U + 1U;
+                }
+            }
+            result.shadow.set(x, y, occluded);
+        }
+    }
+    if (options.coverageMode == ShadowCoverageMode::CoherentFilter &&
+        options.minimumShadowIslandPixels > 0U) {
+        std::vector<std::uint8_t> visited(pixelCount, 0U);
+        std::vector<std::size_t> pending;
+        std::vector<std::size_t> component;
+        pending.reserve(64U);
+        component.reserve(64U);
+        for (std::size_t startIndex = 0; startIndex < pixelCount; ++startIndex) {
+            if (visited[startIndex] != 0U) continue;
+            const auto startX = static_cast<std::uint32_t>(startIndex % shadowWidth);
+            const auto startY = static_cast<std::uint32_t>(startIndex / shadowWidth);
+            if (!result.shadow.get(startX, startY)) continue;
+            pending.clear();
+            component.clear();
+            pending.push_back(startIndex);
+            visited[startIndex] = 1U;
+            while (!pending.empty()) {
+                const auto index = pending.back();
+                pending.pop_back();
+                component.push_back(index);
+                const auto x = static_cast<int>(index % shadowWidth);
+                const auto y = static_cast<int>(index / shadowWidth);
+                for (int offsetY = -1; offsetY <= 1; ++offsetY) {
+                    for (int offsetX = -1; offsetX <= 1; ++offsetX) {
+                        if (offsetX == 0 && offsetY == 0) continue;
+                        const auto neighborX = x + offsetX;
+                        const auto neighborY = y + offsetY;
+                        if (neighborX < 0 || neighborY < 0 ||
+                            neighborX >= static_cast<int>(shadowWidth) ||
+                            neighborY >= static_cast<int>(shadowHeight)) continue;
+                        const auto neighborIndex = static_cast<std::size_t>(neighborY) *
+                                                   shadowWidth +
+                                                   static_cast<std::size_t>(neighborX);
+                        if (visited[neighborIndex] != 0U ||
+                            !result.shadow.get(static_cast<std::uint32_t>(neighborX),
+                                               static_cast<std::uint32_t>(neighborY))) continue;
+                        visited[neighborIndex] = 1U;
+                        pending.push_back(neighborIndex);
+                    }
+                }
+            }
+            if (component.size() < options.minimumShadowIslandPixels) {
+                result.stats.removedSmallIslandPixels += component.size();
+                for (const auto index : component) {
+                    result.shadow.set(static_cast<std::uint32_t>(index % shadowWidth),
+                                      static_cast<std::uint32_t>(index / shadowWidth), false);
+                }
+            }
+        }
+    }
+    const auto shadowed = static_cast<std::uint64_t>(std::count_if(
+        result.shadow.bytes().begin(), result.shadow.bytes().end(),
+        [](const std::byte value) { return value != std::byte{0}; }));
     const auto finished = Clock::now();
     result.stats.raySeconds = elapsed(built, finished);
     result.stats.rays = static_cast<std::uint64_t>(result.shadow.widthPixels()) *
                         result.shadow.heightPixels() * samplesPerPixel;
-    result.stats.shadowedSamples = shadowed.load();
+    result.stats.shadowedSamples = shadowed;
     result.stats.partialCoveragePixels = partialCoverage.load();
     return result;
 }

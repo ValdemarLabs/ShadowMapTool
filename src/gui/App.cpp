@@ -386,6 +386,11 @@ int App::run(
         aboutSection_ = 0;
         updateEditControls();
         paint();
+        showAbout_ = false;
+        showAdvanced_ = true;
+        focused_ = Target::AdvancedGaussianRadius;
+        updateEditControls();
+        paint();
         SetTimer(window_, 1U, 100U, nullptr);
     }
 
@@ -551,6 +556,18 @@ LRESULT App::handleMessage(const UINT message, const WPARAM wParam, const LPARAM
         information->ptMinTrackSize.y = static_cast<LONG>(680.0F * scale);
         return 0;
     }
+    case WM_LBUTTONDOWN: {
+        const auto point = mousePoint(lParam);
+        const auto target = hitTest(point.x, point.y);
+        if (showAdvanced_ && isSlider(target)) {
+            focused_ = target;
+            draggedSlider_ = target;
+            SetCapture(window_);
+            updateSlider(target, point.x);
+            return 0;
+        }
+        break;
+    }
     case WM_MOUSEMOVE: {
         if (!trackingMouse_) {
             TRACKMOUSEEVENT tracking{sizeof(tracking), TME_LEAVE, window_, 0};
@@ -558,6 +575,10 @@ LRESULT App::handleMessage(const UINT message, const WPARAM wParam, const LPARAM
             trackingMouse_ = true;
         }
         const auto point = mousePoint(lParam);
+        if (draggedSlider_ != Target::None) {
+            updateSlider(draggedSlider_, point.x);
+            return 0;
+        }
         const auto target = hitTest(point.x, point.y);
         if (target != hovered_) {
             hovered_ = target;
@@ -572,6 +593,12 @@ LRESULT App::handleMessage(const UINT message, const WPARAM wParam, const LPARAM
         return 0;
     case WM_LBUTTONUP: {
         const auto point = mousePoint(lParam);
+        if (draggedSlider_ != Target::None) {
+            updateSlider(draggedSlider_, point.x);
+            draggedSlider_ = Target::None;
+            ReleaseCapture();
+            return 0;
+        }
         const auto target = hitTest(point.x, point.y);
         if (target != Target::None) {
             focused_ = target;
@@ -579,7 +606,17 @@ LRESULT App::handleMessage(const UINT message, const WPARAM wParam, const LPARAM
         }
         return 0;
     }
+    case WM_CAPTURECHANGED:
+        draggedSlider_ = Target::None;
+        return 0;
     case WM_KEYDOWN:
+        if (wParam == VK_ESCAPE && showAdvanced_) {
+            showAdvanced_ = false;
+            focused_ = Target::Advanced;
+            updateEditControls();
+            InvalidateRect(window_, nullptr, FALSE);
+            return 0;
+        }
         if (wParam == VK_ESCAPE && showAssets_) {
             showAssets_ = false;
             focused_ = Target::Assets;
@@ -602,6 +639,7 @@ LRESULT App::handleMessage(const UINT message, const WPARAM wParam, const LPARAM
             return 0;
         }
         if (wParam == VK_F1) {
+            showAdvanced_ = false;
             showAssets_ = false;
             showAbout_ = false;
             showHelp_ = true;
@@ -612,6 +650,11 @@ LRESULT App::handleMessage(const UINT message, const WPARAM wParam, const LPARAM
         }
         if (wParam == VK_TAB) {
             moveFocus((GetKeyState(VK_SHIFT) & 0x8000) != 0);
+            return 0;
+        }
+        if (showAdvanced_ && isSlider(focused_) &&
+            (wParam == VK_LEFT || wParam == VK_RIGHT)) {
+            stepSlider(focused_, wParam == VK_LEFT ? -1 : 1);
             return 0;
         }
         if (wParam == VK_RETURN || wParam == VK_SPACE) {
@@ -828,6 +871,10 @@ App::Layout App::calculateLayout() const
             layout.patternCard.top + 310.0F);
     }
 
+    layout.advanced = D2D1::RectF(
+        layout.patternCard.right - 142.0F, layout.patternCard.top + 10.0F,
+        layout.patternCard.right - 16.0F, layout.patternCard.top + 40.0F);
+
     layout.outputCard = D2D1::RectF(margin, contentTop + 466.0F,
                                     margin + leftWidth, contentTop + 562.0F);
     const float modeWidth = (leftWidth - 42.0F) / 2.0F;
@@ -898,6 +945,30 @@ App::Layout App::calculateLayout() const
     layout.aboutClose = D2D1::RectF(
         aboutLeft + aboutWidth - 120.0F, aboutTop + aboutHeight - 58.0F,
         aboutLeft + aboutWidth - 24.0F, aboutTop + aboutHeight - 20.0F);
+    const float advancedWidth = std::min(760.0F, size.width - 60.0F);
+    const float advancedHeight = std::min(630.0F, size.height - 30.0F);
+    const float advancedLeft = (size.width - advancedWidth) / 2.0F;
+    const float advancedTop = (size.height - advancedHeight) / 2.0F;
+    const float toggleWidth = (advancedWidth - 68.0F) / 3.0F;
+    for (std::size_t index = 0; index < layout.advancedToggles.size(); ++index) {
+        layout.advancedToggles[index] = D2D1::RectF(
+            advancedLeft + 24.0F + static_cast<float>(index) * (toggleWidth + 10.0F),
+            advancedTop + 100.0F,
+            advancedLeft + 24.0F + static_cast<float>(index) * (toggleWidth + 10.0F) +
+                toggleWidth,
+            advancedTop + 140.0F);
+    }
+    for (std::size_t index = 0; index < layout.advancedSliders.size(); ++index) {
+        const float top = advancedTop + 158.0F + static_cast<float>(index) * 70.0F;
+        layout.advancedSliders[index] = D2D1::RectF(
+            advancedLeft + 34.0F, top, advancedLeft + advancedWidth - 34.0F, top + 54.0F);
+    }
+    layout.advancedReset = D2D1::RectF(
+        advancedLeft + 24.0F, advancedTop + advancedHeight - 58.0F,
+        advancedLeft + 152.0F, advancedTop + advancedHeight - 20.0F);
+    layout.advancedClose = D2D1::RectF(
+        advancedLeft + advancedWidth - 120.0F, advancedTop + advancedHeight - 58.0F,
+        advancedLeft + advancedWidth - 24.0F, advancedTop + advancedHeight - 20.0F);
     layout.status = D2D1::RectF(margin, size.height - 47.0F, size.width - margin, size.height - 16.0F);
     return layout;
 }
@@ -907,7 +978,8 @@ void App::updateEditControls()
     if (window_ == nullptr) return;
     const auto layout = calculateLayout();
     const float scale = static_cast<float>(dpi_) / 96.0F;
-    const bool visible = !testMode_ && !showHelp_ && !showAssets_ && !showAbout_;
+    const bool visible =
+        !testMode_ && !showHelp_ && !showAssets_ && !showAbout_ && !showAdvanced_;
     for (std::size_t index = 0; index < lightEdits_.size(); ++index) {
         if (lightEdits_[index] == nullptr) continue;
         const auto& rectangle = layout.lightEdits[index];
@@ -924,6 +996,22 @@ void App::updateEditControls()
 App::Target App::hitTest(const float x, const float y) const
 {
     const auto layout = calculateLayout();
+    if (showAdvanced_) {
+        for (std::size_t index = 0; index < layout.advancedToggles.size(); ++index) {
+            if (contains(layout.advancedToggles[index], x, y)) {
+                return static_cast<Target>(static_cast<int>(Target::AdvancedCoherentFilter) +
+                                           static_cast<int>(index));
+            }
+        }
+        for (std::size_t index = 0; index < layout.advancedSliders.size(); ++index) {
+            if (contains(layout.advancedSliders[index], x, y)) {
+                return static_cast<Target>(static_cast<int>(Target::AdvancedGaussianRadius) +
+                                           static_cast<int>(index));
+            }
+        }
+        if (contains(layout.advancedReset, x, y)) return Target::AdvancedReset;
+        return contains(layout.advancedClose, x, y) ? Target::AdvancedClose : Target::None;
+    }
     if (showHelp_) return contains(layout.helpClose, x, y) ? Target::HelpClose : Target::None;
     if (showAbout_) {
         for (std::size_t index = 0; index < layout.aboutSections.size(); ++index) {
@@ -965,6 +1053,7 @@ App::Target App::hitTest(const float x, const float y) const
                     static_cast<int>(Target::ShadowSamples1) + static_cast<int>(index));
             }
         }
+        if (contains(layout.advanced, x, y)) return Target::Advanced;
     }
     if (contains(layout.copyMode, x, y)) return Target::CopyMode;
     if (contains(layout.inPlaceMode, x, y)) return Target::InPlaceMode;
@@ -982,8 +1071,97 @@ D2D1_POINT_2F App::mousePoint(const LPARAM lParam) const
                          static_cast<float>(GET_Y_LPARAM(lParam)) / scale);
 }
 
+bool App::isSlider(const Target target) const
+{
+    return target >= Target::AdvancedGaussianRadius && target <= Target::AdvancedThreads;
+}
+
+void App::updateSlider(const Target target, const float x)
+{
+    if (!isSlider(target)) return;
+    const auto layout = calculateLayout();
+    const auto index = static_cast<std::size_t>(
+        static_cast<int>(target) - static_cast<int>(Target::AdvancedGaussianRadius));
+    const auto& rectangle = layout.advancedSliders[index];
+    const auto width = std::max(1.0F, rectangle.right - rectangle.left);
+    const auto normalized = std::clamp((x - rectangle.left) / width, 0.0F, 1.0F);
+    switch (target) {
+    case Target::AdvancedGaussianRadius:
+        gaussianRadius_ = static_cast<std::uint32_t>(std::lround(normalized * 3.0F));
+        break;
+    case Target::AdvancedCoverageThreshold:
+        coverageThreshold_ = static_cast<float>(
+            std::lround((0.20F + normalized * 0.60F) * 100.0F)) / 100.0F;
+        break;
+    case Target::AdvancedRayBias:
+        rayOriginOffset_ = static_cast<float>(std::lround(normalized * 64.0F)) * 0.5F;
+        break;
+    case Target::AdvancedMinimumIsland:
+        minimumShadowIslandPixels_ =
+            static_cast<std::uint32_t>(std::lround(normalized * 16.0F));
+        break;
+    case Target::AdvancedThreads:
+        workerThreads_ = static_cast<std::uint32_t>(std::lround(normalized * 32.0F));
+        break;
+    default:
+        return;
+    }
+    if (target != Target::AdvancedThreads && previewKind_ == PreviewKind::Calculated) {
+        calculationDirty_ = true;
+    }
+    InvalidateRect(window_, nullptr, FALSE);
+}
+
+void App::stepSlider(const Target target, const int direction)
+{
+    switch (target) {
+    case Target::AdvancedGaussianRadius:
+        gaussianRadius_ = static_cast<std::uint32_t>(std::clamp(
+            static_cast<int>(gaussianRadius_) + direction, 0, 3));
+        break;
+    case Target::AdvancedCoverageThreshold:
+        coverageThreshold_ = std::clamp(
+            coverageThreshold_ + static_cast<float>(direction) * 0.01F, 0.20F, 0.80F);
+        break;
+    case Target::AdvancedRayBias:
+        rayOriginOffset_ = std::clamp(
+            rayOriginOffset_ + static_cast<float>(direction) * 0.5F, 0.0F, 32.0F);
+        break;
+    case Target::AdvancedMinimumIsland:
+        minimumShadowIslandPixels_ = static_cast<std::uint32_t>(std::clamp(
+            static_cast<int>(minimumShadowIslandPixels_) + direction, 0, 16));
+        break;
+    case Target::AdvancedThreads:
+        workerThreads_ = static_cast<std::uint32_t>(std::clamp(
+            static_cast<int>(workerThreads_) + direction, 0, 32));
+        break;
+    default:
+        return;
+    }
+    if (target != Target::AdvancedThreads && previewKind_ == PreviewKind::Calculated) {
+        calculationDirty_ = true;
+    }
+    InvalidateRect(window_, nullptr, FALSE);
+}
+
 void App::moveFocus(const bool backwards)
 {
+    if (showAdvanced_) {
+        constexpr std::array<Target, 10> targets{
+            Target::AdvancedCoherentFilter, Target::AdvancedAlphaTerrain,
+            Target::AdvancedCliffWalls, Target::AdvancedGaussianRadius,
+            Target::AdvancedCoverageThreshold, Target::AdvancedRayBias,
+            Target::AdvancedMinimumIsland, Target::AdvancedThreads,
+            Target::AdvancedReset, Target::AdvancedClose};
+        auto iterator = std::find(targets.begin(), targets.end(), focused_);
+        std::size_t index = iterator == targets.end()
+            ? 0U : static_cast<std::size_t>(iterator - targets.begin());
+        index = backwards ? (index == 0U ? targets.size() - 1U : index - 1U)
+                          : (index + 1U) % targets.size();
+        focused_ = targets[index];
+        InvalidateRect(window_, nullptr, FALSE);
+        return;
+    }
     if (showAssets_) {
         constexpr std::array<Target, 4> targets{
             Target::AssetsWarcraftBrowse, Target::AssetsCascBrowse,
@@ -1017,6 +1195,7 @@ void App::moveFocus(const bool backwards)
     }
     const auto available = [this](const Target target) {
         if (target >= Target::Terrain && target <= Target::ShadowSamples4) return !testMode_;
+        if (target == Target::Advanced) return !testMode_;
         if (target >= Target::PatternBlack && target <= Target::PatternQuadrants) return testMode_;
         return target >= Target::Browse && target <= Target::Help;
     };
@@ -1072,6 +1251,14 @@ void App::activate(const Target target)
         shadowSampleGrid_ = 4U;
         calculationDirty_ = previewKind_ == PreviewKind::Calculated;
         break;
+    case Target::Advanced:
+        showAssets_ = false;
+        showAbout_ = false;
+        showHelp_ = false;
+        showAdvanced_ = true;
+        focused_ = Target::AdvancedCoherentFilter;
+        updateEditControls();
+        break;
     case Target::PatternBlack: selectPattern(Pattern::Black); break;
     case Target::PatternWhite: selectPattern(Pattern::White); break;
     case Target::PatternChecker: selectPattern(Pattern::Checker); break;
@@ -1101,6 +1288,7 @@ void App::activate(const Target target)
                   StatusKind::Neutral);
         break;
     case Target::Assets:
+        showAdvanced_ = false;
         showHelp_ = false;
         showAbout_ = false;
         showAssets_ = true;
@@ -1111,6 +1299,7 @@ void App::activate(const Target target)
         openLogsFolder();
         break;
     case Target::About:
+        showAdvanced_ = false;
         showAssets_ = false;
         showHelp_ = false;
         showAbout_ = true;
@@ -1118,6 +1307,7 @@ void App::activate(const Target target)
         updateEditControls();
         break;
     case Target::Help:
+        showAdvanced_ = false;
         showAssets_ = false;
         showAbout_ = false;
         showHelp_ = true;
@@ -1148,6 +1338,44 @@ void App::activate(const Target target)
     case Target::HelpClose:
         showHelp_ = false;
         focused_ = Target::Help;
+        updateEditControls();
+        break;
+    case Target::AdvancedCoherentFilter:
+        coverageMode_ = coverageMode_ == ShadowCoverageMode::CoherentFilter
+            ? ShadowCoverageMode::ClassicMajority
+            : ShadowCoverageMode::CoherentFilter;
+        calculationDirty_ = previewKind_ == PreviewKind::Calculated;
+        break;
+    case Target::AdvancedAlphaTerrain:
+        ignoreTransparentTerrain_ = !ignoreTransparentTerrain_;
+        calculationDirty_ = previewKind_ == PreviewKind::Calculated;
+        break;
+    case Target::AdvancedCliffWalls:
+        cliffWalls_ = !cliffWalls_;
+        calculationDirty_ = previewKind_ == PreviewKind::Calculated;
+        break;
+    case Target::AdvancedGaussianRadius:
+    case Target::AdvancedCoverageThreshold:
+    case Target::AdvancedRayBias:
+    case Target::AdvancedMinimumIsland:
+    case Target::AdvancedThreads:
+        break;
+    case Target::AdvancedReset:
+        coverageMode_ = ShadowCoverageMode::CoherentFilter;
+        gaussianRadius_ = 1U;
+        coverageThreshold_ = 0.45F;
+        rayOriginOffset_ = 2.0F;
+        minimumShadowIslandPixels_ = 4U;
+        workerThreads_ = 0U;
+        ignoreTransparentTerrain_ = true;
+        cliffWalls_ = false;
+        calculationDirty_ = previewKind_ == PreviewKind::Calculated;
+        setStatus(L"Advanced shadow settings restored to recommended defaults.",
+                  StatusKind::Neutral);
+        break;
+    case Target::AdvancedClose:
+        showAdvanced_ = false;
+        focused_ = Target::Advanced;
         updateEditControls();
         break;
     case Target::None:
@@ -1502,12 +1730,20 @@ void App::calculateShadows()
         }
         GenerationOptions options;
         options.lightDirection = readLightDirection();
+        options.threadCount = workerThreads_;
         options.shadowSampleGrid = shadowSampleGrid_;
+        options.rayOriginOffset = rayOriginOffset_;
+        options.gaussianRadius = gaussianRadius_;
+        options.coverageThreshold = coverageThreshold_;
+        options.minimumShadowIslandPixels = minimumShadowIslandPixels_;
         options.terrainGeometry = terrainGeometry_;
+        options.coverageMode = coverageMode_;
         options.terrain = includeTerrain_;
+        options.cliffWalls = cliffWalls_;
         options.doodads = includeDoodads_;
         options.destructibles = includeDestructibles_;
         options.honorIgnoreShadowRegions = honorIgnoreRegions_;
+        options.ignoreTransparentTerrain = ignoreTransparentTerrain_;
         auto generated = generateShadowMap(source, assets, options);
         for (const auto& warning : generated.warnings) {
             logEvent(StatusKind::Warning, widen(warning));
@@ -1521,6 +1757,17 @@ void App::calculateShadows()
                        << (terrainGeometry_ == TerrainGeometryMode::SmoothSubTile
                                ? L"smooth-sub-tile" : L"classic-triangles")
                        << L", samples=" << generated.stats.shadowSampleGrid << L"x"
+                       << L", filter="
+                       << (coverageMode_ == ShadowCoverageMode::CoherentFilter
+                               ? L"coherent" : L"hard-majority")
+                       << L", gaussian-radius=" << gaussianRadius_
+                       << L", coverage-threshold=" << std::fixed << std::setprecision(2)
+                       << coverageThreshold_
+                       << L", ray-bias=" << rayOriginOffset_
+                       << L", min-island=" << minimumShadowIslandPixels_
+                       << L", alpha-mask=" << (ignoreTransparentTerrain_ ? L"on" : L"off")
+                       << L", cliff-walls=" << (cliffWalls_ ? L"on" : L"off")
+                       << L", threads=" << (workerThreads_ == 0U ? L"auto" : std::to_wstring(workerThreads_))
                        << L", placements=" << generated.stats.placements
                        << L", resolved=" << generated.stats.resolvedPlacements
                        << L", unresolved=" << generated.stats.unresolvedPlacements
@@ -1529,6 +1776,8 @@ void App::calculateShadows()
                        << L", cliff-wall-triangles=" << generated.stats.cliffWallTriangles
                        << L", transparent-terrain-types=" << generated.stats.transparentTerrainTypes
                        << L", partial-coverage-pixels=" << generated.stats.partialCoveragePixels
+                       << L", removed-small-island-pixels="
+                       << generated.stats.removedSmallIslandPixels
                        << L", rays=" << generated.stats.rays
                        << L", seconds=" << std::fixed << std::setprecision(3)
                        << (generated.stats.loadSeconds + generated.stats.bvhSeconds +
@@ -1726,6 +1975,41 @@ void App::drawButton(
     drawText(label, rectangle, buttonFormat_.Get(), textBrush_.Get());
 }
 
+void App::drawSlider(
+    const D2D1_RECT_F& rectangle,
+    const std::wstring_view label,
+    const std::wstring_view value,
+    const Target target,
+    const float normalizedValue)
+{
+    const auto normalized = std::clamp(normalizedValue, 0.0F, 1.0F);
+    drawText(label, D2D1::RectF(rectangle.left, rectangle.top,
+                                rectangle.right - 120.0F, rectangle.top + 24.0F),
+             bodyFormat_.Get(), textBrush_.Get());
+    drawText(value, D2D1::RectF(rectangle.right - 112.0F, rectangle.top,
+                                rectangle.right, rectangle.top + 24.0F),
+             buttonFormat_.Get(), accentBrush_.Get());
+    const float trackTop = rectangle.bottom - 13.0F;
+    const auto track = D2D1::RoundedRect(
+        D2D1::RectF(rectangle.left, trackTop, rectangle.right, trackTop + 5.0F), 2.5F, 2.5F);
+    renderTarget_->FillRoundedRectangle(track, borderBrush_.Get());
+    const float thumbX = rectangle.left +
+        (rectangle.right - rectangle.left) * normalized;
+    if (thumbX > rectangle.left) {
+        renderTarget_->FillRoundedRectangle(
+            D2D1::RoundedRect(D2D1::RectF(rectangle.left, trackTop, thumbX, trackTop + 5.0F),
+                              2.5F, 2.5F),
+            accentBrush_.Get());
+    }
+    renderTarget_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(thumbX, trackTop + 2.5F),
+                                              7.0F, 7.0F),
+                               accentBrush_.Get());
+    if (focused_ == target || hovered_ == target) {
+        renderTarget_->DrawRoundedRectangle(D2D1::RoundedRect(rectangle, 7.0F, 7.0F),
+                                             accentBrush_.Get(), 1.0F);
+    }
+}
+
 void App::paint()
 {
     if (!createDeviceResources()) return;
@@ -1800,6 +2084,7 @@ void App::paint()
             includeTerrain_, includeDoodads_, includeDestructibles_, honorIgnoreRegions_,
             terrainGeometry_ == TerrainGeometryMode::ClassicTriangulated,
             terrainGeometry_ == TerrainGeometryMode::SmoothSubTile};
+        drawButton(layout.advanced, L"Tuning...", Target::Advanced, false);
         for (std::size_t index = 0; index < labels.size(); ++index) {
             const auto target = static_cast<Target>(static_cast<int>(Target::Terrain) +
                                                     static_cast<int>(index));
@@ -1904,6 +2189,76 @@ void App::paint()
                                   layout.status.right, layout.status.bottom),
              smallFormat_.Get(), statusBrush);
 
+    if (showAdvanced_) {
+        backgroundBrush_->SetOpacity(0.86F);
+        renderTarget_->FillRectangle(D2D1::RectF(0.0F, 0.0F, size.width, size.height),
+                                     backgroundBrush_.Get());
+        backgroundBrush_->SetOpacity(1.0F);
+
+        const float advancedWidth = std::min(760.0F, size.width - 60.0F);
+        const float advancedHeight = std::min(630.0F, size.height - 30.0F);
+        const float advancedLeft = (size.width - advancedWidth) / 2.0F;
+        const float advancedTop = (size.height - advancedHeight) / 2.0F;
+        const auto advancedCard = D2D1::RectF(
+            advancedLeft, advancedTop, advancedLeft + advancedWidth,
+            advancedTop + advancedHeight);
+        drawCard(advancedCard);
+        drawText(L"Advanced shadow tuning",
+                 D2D1::RectF(advancedLeft + 24.0F, advancedTop + 18.0F,
+                             advancedCard.right - 24.0F, advancedTop + 54.0F),
+                 titleFormat_.Get(), textBrush_.Get());
+        drawText(
+            L"SHD stores binary cells. These settings control sampling, spatial filtering, "
+            L"and the final filled-cell decision.",
+            D2D1::RectF(advancedLeft + 25.0F, advancedTop + 58.0F,
+                        advancedCard.right - 25.0F, advancedTop + 88.0F),
+            helpBodyFormat_.Get(), mutedBrush_.Get());
+
+        drawButton(layout.advancedToggles[0], L"Coherent filter",
+                   Target::AdvancedCoherentFilter,
+                   coverageMode_ == ShadowCoverageMode::CoherentFilter);
+        drawButton(layout.advancedToggles[1], L"Ignore alpha terrain",
+                   Target::AdvancedAlphaTerrain, ignoreTransparentTerrain_);
+        drawButton(layout.advancedToggles[2], L"Cliff wall casters",
+                   Target::AdvancedCliffWalls, cliffWalls_);
+
+        const auto radiusValue = gaussianRadius_ == 0U
+            ? std::wstring(L"Off")
+            : std::to_wstring(gaussianRadius_) + L" cell" +
+                  (gaussianRadius_ == 1U ? L"" : L"s");
+        const auto coverageValue =
+            std::to_wstring(static_cast<int>(std::lround(coverageThreshold_ * 100.0F))) + L"%";
+        std::wostringstream biasValue;
+        biasValue << std::fixed << std::setprecision(1) << rayOriginOffset_;
+        const auto islandValue = minimumShadowIslandPixels_ == 0U
+            ? std::wstring(L"Off")
+            : std::to_wstring(minimumShadowIslandPixels_) + L" cells";
+        const auto threadsValue = workerThreads_ == 0U
+            ? std::wstring(L"Auto") : std::to_wstring(workerThreads_);
+        drawSlider(layout.advancedSliders[0], L"Gaussian radius — wider softens and joins edges",
+                   radiusValue, Target::AdvancedGaussianRadius,
+                   static_cast<float>(gaussianRadius_) / 3.0F);
+        drawSlider(layout.advancedSliders[1], L"Sub-cell coverage cutoff — lower keeps more shadow",
+                   coverageValue, Target::AdvancedCoverageThreshold,
+                   (coverageThreshold_ - 0.20F) / 0.60F);
+        drawSlider(layout.advancedSliders[2], L"Terrain ray bias — prevents raised-ground acne",
+                   biasValue.str(), Target::AdvancedRayBias, rayOriginOffset_ / 32.0F);
+        drawSlider(layout.advancedSliders[3], L"Minimum shadow island — removes isolated dots",
+                   islandValue, Target::AdvancedMinimumIsland,
+                   static_cast<float>(minimumShadowIslandPixels_) / 16.0F);
+        drawSlider(layout.advancedSliders[4], L"Worker threads — performance only",
+                   threadsValue, Target::AdvancedThreads,
+                   static_cast<float>(workerThreads_) / 32.0F);
+        drawText(
+            L"Recommended: coherent filter on, radius 1, cutoff 45%, bias 2.0, island 4. "
+            L"Cliff walls are experimental and may over-darken decorative cliffs.",
+            D2D1::RectF(advancedLeft + 34.0F, advancedTop + advancedHeight - 103.0F,
+                        advancedCard.right - 34.0F, advancedTop + advancedHeight - 65.0F),
+            helpBodyFormat_.Get(), mutedBrush_.Get());
+        drawButton(layout.advancedReset, L"Reset defaults", Target::AdvancedReset, false);
+        drawButton(layout.advancedClose, L"Close", Target::AdvancedClose, false, true);
+    }
+
     if (showAssets_) {
         backgroundBrush_->SetOpacity(0.86F);
         renderTarget_->FillRectangle(D2D1::RectF(0.0F, 0.0F, size.width, size.height),
@@ -2006,12 +2361,12 @@ void App::paint()
                 L"ShadowMap Tool calculates, previews, exports, and safely writes Warcraft III "
                 L"static war3map.shd data. It reconstructs terrain plus shadow-enabled doodad "
                 L"and destructible geometry, then ray casts a configurable light vector. It "
-                L"offers classic or smoother terrain, soft 1x/2x/4x edge coverage, IgnoreShadow "
+                L"offers classic or smoother terrain, coherent 1x/2x/4x edge filtering, IgnoreShadow "
                 L"regions, source filters, safe copies, and backups. The result remains Warcraft's "
                 L"fixed binary four-cells-per-tile shadowmap rather than a higher-resolution texture. "
-                L"Transparent terrain receivers are automatically excluded and discrete cliff "
-                L"walls are reconstructed. Exact decorative cliff-model ornament and alpha-tested "
-                L"model materials remain compatibility work.",
+                L"Transparent terrain receivers are automatically excluded. Smooth terrain uses "
+                L"matched caster/receiver surfaces plus slope-aware bias to avoid self-shadow acne. "
+                L"Exact decorative cliff models and alpha-tested model materials remain compatibility work.",
                 layout.aboutContents[0], helpBodyFormat_.Get(), textBrush_.Get());
         } else if (aboutSection_ == 1) {
             drawText(
@@ -2069,9 +2424,10 @@ void App::paint()
                              helpCard.right - 28.0F, helpTop + 122.0F),
                  headingFormat_.Get(), warningBrush_.Get());
         drawText(
-            L"Choose shadow sources and terrain mode. Ultra 4x is the default soft-coverage quality; "
-            L"Smooth 2x and Fast 1x trade quality for speed. Set the light vector (default "
-            L"1, 1, -1), choose Calculate shadows, inspect the rendered preview, then Save to map.",
+            L"Choose shadow sources and terrain mode. Ultra 4x is the default edge quality; "
+            L"Smooth 2x and Fast 1x trade quality for speed. Open Tuning for Gaussian radius, "
+            L"coverage cutoff, terrain ray bias, alpha terrain, cleanup, and threads. Set the "
+            L"light vector, calculate, inspect the rendered preview, then Save to map.",
             D2D1::RectF(helpLeft + 28.0F, helpTop + 126.0F,
                         helpCard.right - 28.0F, helpTop + 192.0F),
             helpBodyFormat_.Get(), textBrush_.Get());
@@ -2086,7 +2442,7 @@ void App::paint()
             L"• To suppress an unwanted doodad shadow, set the doodad's Has shadow field to "
             L"False in Object Editor before calculating.\n"
             L"• Fully transparent alpha terrain is detected from its imported/installed BLP and "
-            L"does not receive static shadow. A warning is logged if terrain metadata is unavailable.\n"
+            L"is ignored by default; switch off Ignore alpha terrain in Tuning to include it.\n"
             L"• Open Assets to select a current CASC installation plus CascLib.dll, or a classic "
             L"MPQ installation such as 1.27b, used to resolve installed stock models.",
             D2D1::RectF(helpLeft + 28.0F, helpTop + 240.0F,

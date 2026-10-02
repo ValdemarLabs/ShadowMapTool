@@ -3,6 +3,7 @@
 #include "formats/W3E.hpp"
 #include "shadow/Pattern.hpp"
 #include "shadow/ShadowMap.hpp"
+#include "shadow/ShadowGenerator.hpp"
 
 #include <d2d1.h>
 #include <dwrite.h>
@@ -41,6 +42,7 @@ private:
         ShadowSamples1,
         ShadowSamples2,
         ShadowSamples4,
+        Advanced,
         PatternBlack,
         PatternWhite,
         PatternChecker,
@@ -68,6 +70,16 @@ private:
         AboutCredits,
         AboutClose,
         HelpClose,
+        AdvancedCoherentFilter,
+        AdvancedAlphaTerrain,
+        AdvancedCliffWalls,
+        AdvancedGaussianRadius,
+        AdvancedCoverageThreshold,
+        AdvancedRayBias,
+        AdvancedMinimumIsland,
+        AdvancedThreads,
+        AdvancedReset,
+        AdvancedClose,
         Count
     };
 
@@ -80,6 +92,7 @@ private:
         std::array<D2D1_RECT_F, 6> patterns{};
         std::array<D2D1_RECT_F, 3> lightEdits{};
         D2D1_RECT_F outputCard{};
+        D2D1_RECT_F advanced{};
         D2D1_RECT_F copyMode{};
         D2D1_RECT_F inPlaceMode{};
         D2D1_RECT_F previewCard{};
@@ -102,6 +115,10 @@ private:
         D2D1_RECT_F aboutClose{};
         D2D1_RECT_F helpClose{};
         D2D1_RECT_F status{};
+        std::array<D2D1_RECT_F, 3> advancedToggles{};
+        std::array<D2D1_RECT_F, 5> advancedSliders{};
+        D2D1_RECT_F advancedReset{};
+        D2D1_RECT_F advancedClose{};
     };
 
     static LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
@@ -122,6 +139,9 @@ private:
     void activate(Target target);
     void moveFocus(bool backwards);
 
+    [[nodiscard]] bool isSlider(Target target) const;
+    void updateSlider(Target target, float x);
+    void stepSlider(Target target, int direction);
     void chooseMap();
     void loadMap(const std::filesystem::path& path);
     void selectPattern(Pattern pattern);
@@ -158,6 +178,12 @@ private:
         bool primary = false);
 
     HWND window_ = nullptr;
+    void drawSlider(
+        const D2D1_RECT_F& rectangle,
+        std::wstring_view label,
+        std::wstring_view value,
+        Target target,
+        float normalizedValue);
     std::array<HWND, 3> lightEdits_{};
     HBRUSH editBrush_ = nullptr;
     UINT dpi_ = 96;
@@ -167,6 +193,7 @@ private:
 
     Microsoft::WRL::ComPtr<ID2D1Factory> d2dFactory_;
     Microsoft::WRL::ComPtr<IDWriteFactory> writeFactory_;
+    Target draggedSlider_ = Target::None;
     Microsoft::WRL::ComPtr<ID2D1HwndRenderTarget> renderTarget_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> backgroundBrush_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> panelBrush_;
@@ -199,6 +226,7 @@ private:
     int aboutSection_ = 0;
     bool testMode_ = false;
     bool includeTerrain_ = true;
+    bool showAdvanced_ = false;
     bool includeDoodads_ = true;
     bool includeDestructibles_ = true;
     bool honorIgnoreRegions_ = true;
@@ -207,6 +235,14 @@ private:
     bool calculationDirty_ = false;
     std::optional<std::filesystem::path> warcraftDirectory_;
     std::optional<std::filesystem::path> cascLibrary_;
+    ShadowCoverageMode coverageMode_ = ShadowCoverageMode::CoherentFilter;
+    std::uint32_t gaussianRadius_ = 1;
+    float coverageThreshold_ = 0.45F;
+    float rayOriginOffset_ = 2.0F;
+    std::uint32_t minimumShadowIslandPixels_ = 4;
+    std::uint32_t workerThreads_ = 0;
+    bool ignoreTransparentTerrain_ = true;
+    bool cliffWalls_ = false;
     std::filesystem::path logsDirectory_;
     std::filesystem::path sessionLogPath_;
     std::ofstream sessionLog_;

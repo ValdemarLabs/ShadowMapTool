@@ -138,10 +138,39 @@ float W3EMap::sampleHeight(
     const auto h01 = vertex(tileX, tileY + 1U).groundHeight;
     const auto h11 = vertex(tileX + 1U, tileY + 1U).groundHeight;
     if (mode == TerrainGeometryMode::SmoothSubTile) {
-        return h00 * (1.0F - fractionX) * (1.0F - fractionY) +
-               h10 * fractionX * (1.0F - fractionY) +
-               h01 * (1.0F - fractionX) * fractionY +
-               h11 * fractionX * fractionY;
+        constexpr std::uint32_t subdivisions = 2U;
+        const auto subX = std::min(static_cast<std::uint32_t>(fractionX * subdivisions),
+                                   subdivisions - 1U);
+        const auto subY = std::min(static_cast<std::uint32_t>(fractionY * subdivisions),
+                                   subdivisions - 1U);
+        const auto subLocalX = fractionX * subdivisions - static_cast<float>(subX);
+        const auto subLocalY = fractionY * subdivisions - static_cast<float>(subY);
+        const auto bilinear = [&](const std::uint32_t x, const std::uint32_t y) {
+            const auto fx = static_cast<float>(x) / static_cast<float>(subdivisions);
+            const auto fy = static_cast<float>(y) / static_cast<float>(subdivisions);
+            return h00 * (1.0F - fx) * (1.0F - fy) +
+                   h10 * fx * (1.0F - fy) +
+                   h01 * (1.0F - fx) * fy + h11 * fx * fy;
+        };
+        const auto q00 = bilinear(subX, subY);
+        const auto q10 = bilinear(subX + 1U, subY);
+        const auto q01 = bilinear(subX, subY + 1U);
+        const auto q11 = bilinear(subX + 1U, subY + 1U);
+        if (((tileX + tileY + subX + subY) & 1U) == 0U) {
+            if (subLocalX >= subLocalY) {
+                return q00 * (1.0F - subLocalX) + q10 * (subLocalX - subLocalY) +
+                       q11 * subLocalY;
+            }
+            return q00 * (1.0F - subLocalY) + q11 * subLocalX +
+                   q01 * (subLocalY - subLocalX);
+        }
+        if (subLocalX + subLocalY <= 1.0F) {
+            return q00 * (1.0F - subLocalX - subLocalY) +
+                   q10 * subLocalX + q01 * subLocalY;
+        }
+        return q10 * (1.0F - subLocalY) +
+               q11 * (subLocalX + subLocalY - 1.0F) +
+               q01 * (1.0F - subLocalX);
     }
     if (((tileX + tileY) & 1U) == 0U) {
         if (fractionX >= fractionY) {

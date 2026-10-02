@@ -152,10 +152,10 @@ void testW3E()
             saddle.sampleHeight(32.0F, 96.0F) == 2.5F,
             "W3E height sampling does not match the generated terrain triangles");
     require(saddle.sampleHeight(96.0F, 32.0F, w3shadow::TerrainGeometryMode::SmoothSubTile) ==
-                1.875F &&
+                1.25F &&
             saddle.sampleHeight(32.0F, 96.0F, w3shadow::TerrainGeometryMode::SmoothSubTile) ==
-                1.875F,
-            "smooth sub-tile terrain did not use bilinear height reconstruction");
+                1.25F,
+            "smooth sub-tile receiver did not match its generated triangle surface");
     require(saddle.terrainTriangles().size() == 2U &&
             saddle.terrainTriangles(w3shadow::TerrainGeometryMode::SmoothSubTile).size() == 8U,
             "terrain geometry modes produced the wrong triangle counts");
@@ -631,6 +631,30 @@ void testWorldEditorReferencePair()
                             return value == std::byte{0} || value == std::byte{0xFF};
                         }),
             "supersampling produced non-binary SHD values");
+    std::size_t isolatedShadowCells = 0U;
+    for (std::uint32_t y = 0; y < ultra.shadow.heightPixels(); ++y) {
+        for (std::uint32_t x = 0; x < ultra.shadow.widthPixels(); ++x) {
+            if (!ultra.shadow.get(x, y)) continue;
+            std::size_t neighbors = 0U;
+            for (int offsetY = -1; offsetY <= 1; ++offsetY) {
+                for (int offsetX = -1; offsetX <= 1; ++offsetX) {
+                    if (offsetX == 0 && offsetY == 0) continue;
+                    const auto neighborX = static_cast<int>(x) + offsetX;
+                    const auto neighborY = static_cast<int>(y) + offsetY;
+                    if (neighborX >= 0 && neighborY >= 0 &&
+                        neighborX < static_cast<int>(ultra.shadow.widthPixels()) &&
+                        neighborY < static_cast<int>(ultra.shadow.heightPixels()) &&
+                        ultra.shadow.get(static_cast<std::uint32_t>(neighborX),
+                                         static_cast<std::uint32_t>(neighborY))) {
+                        ++neighbors;
+                    }
+                }
+            }
+            if (neighbors == 0U) ++isolatedShadowCells;
+        }
+    }
+    require(isolatedShadowCells == 0U,
+            "coherent edge filtering produced isolated shadow dots");
 
     auto invalidOptions = fastOptions;
     invalidOptions.shadowSampleGrid = 3U;
@@ -642,6 +666,39 @@ void testWorldEditorReferencePair()
         rejectedInvalidGrid = true;
     }
     require(rejectedInvalidGrid, "invalid shadow sample grid was accepted");
+
+    const auto rejects = [&](const w3shadow::GenerationOptions& options) {
+        try {
+            static_cast<void>(w3shadow::generateShadowMap(
+                worldEditorMap, noObjectAssets, options));
+            return false;
+        } catch (const std::invalid_argument&) {
+            return true;
+        }
+    };
+    auto invalidTuning = fastOptions;
+    invalidTuning.gaussianRadius = 4U;
+    require(rejects(invalidTuning), "invalid Gaussian radius was accepted");
+
+    invalidTuning = fastOptions;
+    invalidTuning.coverageThreshold = 1.01F;
+    require(rejects(invalidTuning), "invalid coverage threshold was accepted");
+
+    invalidTuning = fastOptions;
+    invalidTuning.rayOriginOffset = -0.5F;
+    require(rejects(invalidTuning), "invalid terrain ray bias was accepted");
+
+    invalidTuning = fastOptions;
+    invalidTuning.minimumShadowIslandPixels = 65U;
+    require(rejects(invalidTuning), "invalid minimum island size was accepted");
+
+    auto unfilteredOptions = ultraOptions;
+    unfilteredOptions.gaussianRadius = 0U;
+    unfilteredOptions.minimumShadowIslandPixels = 0U;
+    const auto unfiltered = w3shadow::generateShadowMap(
+        worldEditorMap, noObjectAssets, unfilteredOptions);
+    require(unfiltered.stats.rays == ultra.stats.rays,
+            "filter tuning unexpectedly changed ray coverage work");
 #endif
 }
 

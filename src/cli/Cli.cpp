@@ -54,11 +54,15 @@ struct Options {
     std::optional<float> lightY;
     std::optional<float> lightZ;
     std::optional<std::uint32_t> threads;
+    float rayBias = 2.0F;
+    std::uint32_t gaussianRadius = 1;
+    float coverageThreshold = 0.45F;
+    std::uint32_t minimumShadowIslandPixels = 4;
     std::uint32_t shadowSampleGrid = 4;
     TerrainGeometryMode terrainGeometry = TerrainGeometryMode::SmoothSubTile;
-    ShadowCoverageMode coverageMode = ShadowCoverageMode::SoftDither;
+    ShadowCoverageMode coverageMode = ShadowCoverageMode::CoherentFilter;
     bool terrain = true;
-    bool cliffWalls = true;
+    bool cliffWalls = false;
     bool doodads = true;
     bool destructibles = true;
     bool honorIgnoreShadowRegions = true;
@@ -73,11 +77,12 @@ void printHelp()
         "w3shadow 1.3.0 - Warcraft III static shadow-map generator\n\n"
         "Commands:\n"
         "  generate MAP [--output MAP | --in-place] [--war3-dir DIR] [--asset-dir DIR]\n"
-        "               [--light-x N --light-y N --light-z N] [--threads N]\n"
+        "               [--light-x N --light-y N --light-z N] [--ray-bias N] [--threads N]\n"
+        "               [--gaussian-radius 0..3] [--coverage-threshold 0..1] [--min-island-size 0..64]\n"
         "               [--edge-samples 1|2|4]\n"
         "               [--smooth-terrain | --classic-terrain] [--hard-edges]\n"
         "               [--no-terrain] [--no-doodads] [--no-destructibles]\n"
-        "               [--no-cliff-walls] [--no-alpha-terrain-mask]\n"
+        "               [--cliff-walls] [--no-alpha-terrain-mask]\n"
         "               [--no-honor-ignore-shadow] [--casc-lib FILE]\n"
         "               [--png FILE] [--dump-shadow FILE] [--dump-scene FILE] [--force]\n"
         "  pattern --map-width W --map-height H --pattern NAME --output FILE [--png FILE] [--force]\n"
@@ -106,6 +111,16 @@ std::uint32_t parsePositiveU32(const std::string_view text, const std::string_vi
     const auto result = std::from_chars(text.data(), text.data() + text.size(), value);
     if (result.ec != std::errc{} || result.ptr != text.data() + text.size() || value == 0) {
         throw std::invalid_argument(std::string(option) + " requires a positive integer");
+    }
+    return value;
+}
+
+std::uint32_t parseU32(const std::string_view text, const std::string_view option)
+{
+    std::uint32_t value = 0;
+    const auto result = std::from_chars(text.data(), text.data() + text.size(), value);
+    if (result.ec != std::errc{} || result.ptr != text.data() + text.size()) {
+        throw std::invalid_argument(std::string(option) + " requires a non-negative integer");
     }
     return value;
 }
@@ -151,11 +166,33 @@ Options parseOptions(const int argc, char* argv[], const int first)
             options.lightZ = parseFiniteFloat(requireValue(argument), argument);
         } else if (argument == "--threads") {
             options.threads = parsePositiveU32(requireValue(argument), argument);
+        } else if (argument == "--ray-bias") {
+            options.rayBias = parseFiniteFloat(requireValue(argument), argument);
+            if (options.rayBias < 0.0F || options.rayBias > 32.0F) {
+                throw std::invalid_argument("--ray-bias requires a value from 0 to 32");
+            }
         } else if (argument == "--edge-samples") {
             options.shadowSampleGrid = parsePositiveU32(requireValue(argument), argument);
             if (options.shadowSampleGrid != 1U && options.shadowSampleGrid != 2U &&
                 options.shadowSampleGrid != 4U) {
                 throw std::invalid_argument("--edge-samples requires 1, 2, or 4");
+            }
+        } else if (argument == "--gaussian-radius") {
+            options.gaussianRadius = parseU32(requireValue(argument), argument);
+            if (options.gaussianRadius > 3U) {
+                throw std::invalid_argument("--gaussian-radius requires a value from 0 to 3");
+            }
+        } else if (argument == "--coverage-threshold") {
+            options.coverageThreshold = parseFiniteFloat(requireValue(argument), argument);
+            if (options.coverageThreshold < 0.0F || options.coverageThreshold > 1.0F) {
+                throw std::invalid_argument(
+                    "--coverage-threshold requires a value from 0 to 1");
+            }
+        } else if (argument == "--min-island-size") {
+            options.minimumShadowIslandPixels = parseU32(requireValue(argument), argument);
+            if (options.minimumShadowIslandPixels > 64U) {
+                throw std::invalid_argument(
+                    "--min-island-size requires a value from 0 to 64");
             }
         } else if (argument == "--smooth-terrain") {
             options.terrainGeometry = TerrainGeometryMode::SmoothSubTile;
@@ -165,8 +202,8 @@ Options parseOptions(const int argc, char* argv[], const int first)
             options.coverageMode = ShadowCoverageMode::ClassicMajority;
         } else if (argument == "--no-terrain") {
             options.terrain = false;
-        } else if (argument == "--no-cliff-walls") {
-            options.cliffWalls = false;
+        } else if (argument == "--cliff-walls") {
+            options.cliffWalls = true;
         } else if (argument == "--no-alpha-terrain-mask") {
             options.ignoreTransparentTerrain = false;
         } else if (argument == "--no-doodads") {
@@ -454,11 +491,15 @@ int commandGenerate(const int argc, char* argv[])
     if (options.lightZ) generation.lightDirection.z = *options.lightZ;
     if (options.threads) generation.threadCount = *options.threads;
     generation.shadowSampleGrid = options.shadowSampleGrid;
+    generation.rayOriginOffset = options.rayBias;
     generation.terrainGeometry = options.terrainGeometry;
     generation.coverageMode = options.coverageMode;
     generation.terrain = options.terrain;
     generation.cliffWalls = options.cliffWalls;
     generation.doodads = options.doodads;
+    generation.gaussianRadius = options.gaussianRadius;
+    generation.coverageThreshold = options.coverageThreshold;
+    generation.minimumShadowIslandPixels = options.minimumShadowIslandPixels;
     generation.destructibles = options.destructibles;
     generation.honorIgnoreShadowRegions = options.honorIgnoreShadowRegions;
     generation.ignoreTransparentTerrain = options.ignoreTransparentTerrain;
@@ -488,7 +529,8 @@ int commandGenerate(const int argc, char* argv[])
               << static_cast<std::uint64_t>(result.stats.mapWidth) * result.stats.mapHeight * 16U
               << " pixels from " << result.stats.rays << " rays ("
               << result.stats.shadowSampleGrid << 'x' << result.stats.shadowSampleGrid
-              << ", " << result.stats.partialCoveragePixels << " partial-coverage pixels) in "
+              << ", " << result.stats.partialCoveragePixels << " partial-coverage pixels, "
+              << result.stats.removedSmallIslandPixels << " small-island pixels removed) in "
               << std::fixed << std::setprecision(3) << total << " s"
               << " (load " << result.stats.loadSeconds << ", BVH " << result.stats.bvhSeconds
               << ", rays " << result.stats.raySeconds << ")\n";
