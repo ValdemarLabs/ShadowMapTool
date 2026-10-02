@@ -2,7 +2,7 @@
 
 This changelog records notable ShadowMapTool releases and development changes.
 
-## Development after 1.3.0
+## 2.10.2026
 
 ### Added
 
