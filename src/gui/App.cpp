@@ -959,7 +959,7 @@ App::Layout App::calculateLayout() const
             advancedTop + 140.0F);
     }
     for (std::size_t index = 0; index < layout.advancedSliders.size(); ++index) {
-        const float top = advancedTop + 158.0F + static_cast<float>(index) * 70.0F;
+        const float top = advancedTop + 158.0F + static_cast<float>(index) * 60.0F;
         layout.advancedSliders[index] = D2D1::RectF(
             advancedLeft + 34.0F, top, advancedLeft + advancedWidth - 34.0F, top + 54.0F);
     }
@@ -1093,6 +1093,10 @@ void App::updateSlider(const Target target, const float x)
         coverageThreshold_ = static_cast<float>(
             std::lround((0.20F + normalized * 0.60F) * 100.0F)) / 100.0F;
         break;
+    case Target::AdvancedSunSoftness:
+        sunAngularRadiusDegrees_ = static_cast<float>(
+            std::lround(normalized * 20.0F)) * 0.25F;
+        break;
     case Target::AdvancedRayBias:
         rayOriginOffset_ = static_cast<float>(std::lround(normalized * 64.0F)) * 0.5F;
         break;
@@ -1126,6 +1130,10 @@ void App::stepSlider(const Target target, const int direction)
         coverageThreshold_ = std::clamp(
             coverageThreshold_ + static_cast<float>(direction) * 0.01F, 0.20F, 0.80F);
         break;
+    case Target::AdvancedSunSoftness:
+        sunAngularRadiusDegrees_ = std::clamp(
+            sunAngularRadiusDegrees_ + static_cast<float>(direction) * 0.25F, 0.0F, 5.0F);
+        break;
     case Target::AdvancedRayBias:
         rayOriginOffset_ = std::clamp(
             rayOriginOffset_ + static_cast<float>(direction) * 0.5F, 0.0F, 32.0F);
@@ -1155,10 +1163,11 @@ void App::stepSlider(const Target target, const int direction)
 void App::moveFocus(const bool backwards)
 {
     if (showAdvanced_) {
-        constexpr std::array<Target, 11> targets{
+        constexpr std::array<Target, 12> targets{
             Target::AdvancedCoherentFilter, Target::AdvancedAlphaTerrain,
             Target::AdvancedCliffWalls, Target::AdvancedGaussianRadius,
-            Target::AdvancedCoverageThreshold, Target::AdvancedRayBias,
+            Target::AdvancedCoverageThreshold, Target::AdvancedSunSoftness,
+            Target::AdvancedRayBias,
             Target::AdvancedMinimumIsland, Target::AdvancedMaximumCasterSpan,
             Target::AdvancedThreads,
             Target::AdvancedReset, Target::AdvancedClose};
@@ -1365,6 +1374,7 @@ void App::activate(const Target target)
         break;
     case Target::AdvancedGaussianRadius:
     case Target::AdvancedCoverageThreshold:
+    case Target::AdvancedSunSoftness:
     case Target::AdvancedRayBias:
     case Target::AdvancedMinimumIsland:
     case Target::AdvancedThreads:
@@ -1374,6 +1384,7 @@ void App::activate(const Target target)
         coverageMode_ = ShadowCoverageMode::CoherentFilter;
         gaussianRadius_ = 1U;
         coverageThreshold_ = 0.45F;
+        sunAngularRadiusDegrees_ = 1.0F;
         rayOriginOffset_ = 2.0F;
         minimumShadowIslandPixels_ = 4U;
         workerThreads_ = 0U;
@@ -1741,6 +1752,7 @@ void App::calculateShadows()
         }
         GenerationOptions options;
         options.lightDirection = readLightDirection();
+        options.sunAngularRadiusDegrees = sunAngularRadiusDegrees_;
         options.threadCount = workerThreads_;
         options.shadowSampleGrid = shadowSampleGrid_;
         options.rayOriginOffset = rayOriginOffset_;
@@ -1775,6 +1787,7 @@ void App::calculateShadows()
                        << L", gaussian-radius=" << gaussianRadius_
                        << L", coverage-threshold=" << std::fixed << std::setprecision(2)
                        << coverageThreshold_
+                       << L", sun-softness-degrees=" << sunAngularRadiusDegrees_
                        << L", ray-bias=" << rayOriginOffset_
                        << L", min-island=" << minimumShadowIslandPixels_
                        << L", alpha-mask=" << (ignoreTransparentTerrain_ ? L"on" : L"off")
@@ -2142,7 +2155,7 @@ void App::paint()
             drawButton(layout.qualityOptions[index], qualityLabels[index], target,
                        shadowSampleGrid_ == qualityValues[index]);
         }
-        drawText(L"Light vector (X, Y, Z) · default 1, 1, -1",
+        drawText(L"Light travel vector (X, Y, Z) · default 1, 1, -1",
                  D2D1::RectF(layout.patternCard.left + 16.0F, layout.patternCard.top + 250.0F,
                              layout.patternCard.right - 16.0F, layout.patternCard.top + 271.0F),
                  smallFormat_.Get(), mutedBrush_.Get());
@@ -2267,6 +2280,9 @@ void App::paint()
                   (gaussianRadius_ == 1U ? L"" : L"s");
         const auto coverageValue =
             std::to_wstring(static_cast<int>(std::lround(coverageThreshold_ * 100.0F))) + L"%";
+        std::wostringstream softnessValue;
+        softnessValue << std::fixed << std::setprecision(2) << sunAngularRadiusDegrees_
+                      << L" degrees";
         std::wostringstream biasValue;
         biasValue << std::fixed << std::setprecision(1) << rayOriginOffset_;
         const auto islandValue = minimumShadowIslandPixels_ == 0U
@@ -2283,20 +2299,25 @@ void App::paint()
         drawSlider(layout.advancedSliders[1], L"Sub-cell coverage cutoff — lower keeps more shadow",
                    coverageValue, Target::AdvancedCoverageThreshold,
                    (coverageThreshold_ - 0.20F) / 0.60F);
-        drawSlider(layout.advancedSliders[2], L"Terrain ray bias — prevents raised-ground acne",
+        drawSlider(layout.advancedSliders[2],
+                   L"Sun softness — angular spread shapes natural penumbrae",
+                   softnessValue.str(), Target::AdvancedSunSoftness,
+                   sunAngularRadiusDegrees_ / 5.0F);
+        drawSlider(layout.advancedSliders[3], L"Terrain ray bias — prevents raised-ground acne",
                    biasValue.str(), Target::AdvancedRayBias, rayOriginOffset_ / 32.0F);
-        drawSlider(layout.advancedSliders[3], L"Minimum shadow island — removes isolated dots",
+        drawSlider(layout.advancedSliders[4], L"Minimum shadow island — removes isolated dots",
                    islandValue, Target::AdvancedMinimumIsland,
                    static_cast<float>(minimumShadowIslandPixels_) / 16.0F);
-        drawSlider(layout.advancedSliders[4],
+        drawSlider(layout.advancedSliders[5],
                    L"Maximum caster span — excludes giant domes/backdrops",
                    casterSpanValue, Target::AdvancedMaximumCasterSpan,
                    maximumCasterHorizontalSpan_ / 32768.0F);
-        drawSlider(layout.advancedSliders[5], L"Worker threads — performance only",
+        drawSlider(layout.advancedSliders[6], L"Worker threads — performance only",
                    threadsValue, Target::AdvancedThreads,
                    static_cast<float>(workerThreads_) / 32.0F);
         drawText(
-            L"Recommended: coherent filter on, radius 1, cutoff 45%, bias 2.0, island 4, "
+            L"Recommended: coherent filter on, radius 1, cutoff 45%, sun softness 1.00°, "
+            L"bias 2.0, island 4, "
             L"caster span 16384. "
             L"Cliff walls are experimental and may over-darken decorative cliffs.",
             D2D1::RectF(advancedLeft + 34.0F, advancedTop + advancedHeight - 103.0F,
@@ -2407,7 +2428,7 @@ void App::paint()
             drawText(
                 L"ShadowMap Tool calculates, previews, exports, and safely writes Warcraft III "
                 L"static war3map.shd data. It reconstructs terrain plus shadow-enabled doodad "
-                L"and destructible geometry, then ray casts a configurable light vector. It "
+                L"and destructible geometry, then ray casts a configurable light-travel vector. It "
                 L"offers classic or smoother terrain, coherent 1x/2x/4x edge filtering, IgnoreShadow "
                 L"regions, source filters, safe copies, and backups. The result remains Warcraft's "
                 L"fixed binary four-cells-per-tile shadowmap rather than a higher-resolution texture. "
@@ -2475,7 +2496,8 @@ void App::paint()
         drawText(
             L"Choose shadow sources and terrain mode. Ultra 4x is the default edge quality; "
             L"Smooth 2x and Fast 1x trade quality for speed. Open Tuning for Gaussian radius, "
-            L"coverage cutoff, terrain ray bias, alpha terrain, cleanup, maximum caster span, "
+            L"coverage cutoff, angular sun softness, terrain ray bias, alpha terrain, cleanup, "
+            L"maximum caster span, "
             L"and threads. The span limit excludes giant domes/backdrops; set Unlimited only "
             L"when such a model should cast. Calculate, inspect the preview, then Save to map.",
             D2D1::RectF(helpLeft + 28.0F, helpTop + 126.0F,

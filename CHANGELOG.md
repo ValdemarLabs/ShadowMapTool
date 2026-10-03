@@ -6,6 +6,7 @@ This changelog records notable ShadowMapTool releases and development changes.
 
 ### Added
 
+- Added deterministic angular sun-disc sampling with a **Sun softness** GUI slider and `--sun-softness 0..5` CLI option, allowing sub-cell rays to form more natural projected contours without increasing the ray count.
 - Added MDX material/geoset resolution so blend, additive, add-alpha, modulate, team-glow, invisible, and zero-alpha layers no longer cast opaque static shadows.
 - Added BLP1/BLP2 alpha decoding and UV-aware ray tests for Warcraft III Transparent material layers; transparent texels now let shadow rays continue through the model.
 - Added transformed placement-scale and caster-bounds diagnostics to GUI session logs and CLI summaries.

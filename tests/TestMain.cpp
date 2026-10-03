@@ -832,6 +832,10 @@ void testWorldEditorReferencePair()
     require(rejects(invalidTuning), "invalid terrain ray bias was accepted");
 
     invalidTuning = fastOptions;
+    invalidTuning.sunAngularRadiusDegrees = 5.01F;
+    require(rejects(invalidTuning), "invalid sun softness was accepted");
+
+    invalidTuning = fastOptions;
     invalidTuning.minimumShadowIslandPixels = 65U;
     require(rejects(invalidTuning), "invalid minimum island size was accepted");
 

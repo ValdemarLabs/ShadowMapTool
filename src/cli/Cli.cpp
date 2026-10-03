@@ -53,6 +53,7 @@ struct Options {
     std::optional<float> lightX;
     std::optional<float> lightY;
     std::optional<float> lightZ;
+    float sunAngularRadiusDegrees = 1.0F;
     std::optional<std::uint32_t> threads;
     float rayBias = 2.0F;
     std::uint32_t gaussianRadius = 1;
@@ -78,7 +79,8 @@ void printHelp()
         "w3shadow 1.3.1 - Warcraft III static shadow-map generator\n\n"
         "Commands:\n"
         "  generate MAP [--output MAP | --in-place] [--war3-dir DIR] [--asset-dir DIR]\n"
-        "               [--light-x N --light-y N --light-z N] [--ray-bias N] [--threads N]\n"
+        "               [--light-x N --light-y N --light-z N] [--sun-softness 0..5]\n"
+        "               [--ray-bias N] [--threads N]\n"
         "               [--gaussian-radius 0..3] [--coverage-threshold 0..1] [--min-island-size 0..64]\n"
         "               [--max-caster-span 0..131072] [--edge-samples 1|2|4]\n"
         "               [--smooth-terrain | --classic-terrain] [--hard-edges]\n"
@@ -165,6 +167,12 @@ Options parseOptions(const int argc, char* argv[], const int first)
             options.lightY = parseFiniteFloat(requireValue(argument), argument);
         } else if (argument == "--light-z") {
             options.lightZ = parseFiniteFloat(requireValue(argument), argument);
+        } else if (argument == "--sun-softness") {
+            options.sunAngularRadiusDegrees = parseFiniteFloat(requireValue(argument), argument);
+            if (options.sunAngularRadiusDegrees < 0.0F ||
+                options.sunAngularRadiusDegrees > 5.0F) {
+                throw std::invalid_argument("--sun-softness requires a value from 0 to 5");
+            }
         } else if (argument == "--threads") {
             options.threads = parsePositiveU32(requireValue(argument), argument);
         } else if (argument == "--ray-bias") {
@@ -497,6 +505,7 @@ int commandGenerate(const int argc, char* argv[])
     if (options.lightX) generation.lightDirection.x = *options.lightX;
     if (options.lightY) generation.lightDirection.y = *options.lightY;
     if (options.lightZ) generation.lightDirection.z = *options.lightZ;
+    generation.sunAngularRadiusDegrees = options.sunAngularRadiusDegrees;
     if (options.threads) generation.threadCount = *options.threads;
     generation.shadowSampleGrid = options.shadowSampleGrid;
     generation.rayOriginOffset = options.rayBias;
@@ -556,7 +565,8 @@ int commandGenerate(const int argc, char* argv[])
               << static_cast<std::uint64_t>(result.stats.mapWidth) * result.stats.mapHeight * 16U
               << " pixels from " << result.stats.rays << " rays ("
               << result.stats.shadowSampleGrid << 'x' << result.stats.shadowSampleGrid
-              << ", " << result.stats.partialCoveragePixels << " partial-coverage pixels, "
+              << ", sun softness " << generation.sunAngularRadiusDegrees << " degrees, "
+              << result.stats.partialCoveragePixels << " partial-coverage pixels, "
               << result.stats.preventedFilterJoinPixels
               << " filter-join pixels prevented, "
               << result.stats.removedSmallIslandPixels << " small-island pixels removed) in "

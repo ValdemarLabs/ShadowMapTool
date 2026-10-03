@@ -75,6 +75,7 @@ private:
         AdvancedCliffWalls,
         AdvancedGaussianRadius,
         AdvancedCoverageThreshold,
+        AdvancedSunSoftness,
         AdvancedRayBias,
         AdvancedMinimumIsland,
         AdvancedMaximumCasterSpan,
@@ -117,7 +118,7 @@ private:
         D2D1_RECT_F helpClose{};
         D2D1_RECT_F status{};
         std::array<D2D1_RECT_F, 3> advancedToggles{};
-        std::array<D2D1_RECT_F, 6> advancedSliders{};
+        std::array<D2D1_RECT_F, 7> advancedSliders{};
         D2D1_RECT_F advancedReset{};
         D2D1_RECT_F advancedClose{};
     };
@@ -239,6 +240,7 @@ private:
     ShadowCoverageMode coverageMode_ = ShadowCoverageMode::CoherentFilter;
     std::uint32_t gaussianRadius_ = 1;
     float coverageThreshold_ = 0.45F;
+    float sunAngularRadiusDegrees_ = 1.0F;
     float rayOriginOffset_ = 2.0F;
     std::uint32_t minimumShadowIslandPixels_ = 4;
     float maximumCasterHorizontalSpan_ = 16384.0F;

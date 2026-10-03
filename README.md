@@ -89,7 +89,7 @@ To calculate the complete shadowmap:
 4. Choose **Smooth sub-tile** (default) or **Classic triangles** for terrain geometry.
 5. Choose **Ultra 4x** edge quality for the smoothest outline, **Smooth 2x** for a faster compromise, or **Fast 1x** for the original single-ray behavior.
 6. Open **Tuning...** to adjust filtering, sub-cell coverage, terrain ray bias, alpha-terrain handling, or performance. The recommended defaults suit most maps.
-7. Keep the default light vector `(1, 1, -1)`, or enter custom X/Y/Z values.
+7. Keep the default light-travel vector `(1, 1, -1)`, or enter custom X/Y/Z values. Use **Sun softness** in **Tuning...** to shape less rigid projected contours.
 8. Select **Calculate shadows**. This renders the complete proposed SHD in memory and does not modify or create a map.
 9. Inspect the calculated full-map preview and warning count. Change settings and calculate again if needed.
 10. Keep **Save as copy** selected for the first run, then select **Save to map** and choose the output map.
@@ -97,7 +97,7 @@ To calculate the complete shadowmap:
 
 **Smooth sub-tile** reconstructs each terrain tile on a 2 × 2 bilinear-derived triangle grid. Receiver heights now use those exact triangles, preventing rays from starting inside a slightly different mathematical surface. **Classic triangles** uses the original two triangles per tile and is provided for version-1-compatible results and lower geometry cost. Experimental contour-based cliff walls are available under **Tuning...** or from the CLI with `--cliff-walls`, but remain off by default because the approximate walls can over-darken raised terrain compared with World Editor.
 
-Edge quality is separate from terrain geometry. **Fast 1x**, **Smooth 2x**, and **Ultra 4x** cast 1, 4, or 16 regularly spaced rays inside every fixed Warcraft SHD cell. Coherent filtering passes that coverage through a configurable Gaussian radius before the final binary cutoff, producing connected, rounded boundaries without visible dither dots. **Tuning...** exposes radius `0..3`, coverage cutoff `20..80%`, and minimum island size `0..16`; lower cutoffs retain more partial shadow while larger radii join and soften shapes more aggressively. The SHD still contains only native `0x00`/`0xFF` values and cannot store true opacity or additional resolution. Ultra 4x can take roughly sixteen times the ray-casting work of Fast 1x on a large map. Turn off **Coherent filter** (or use `--hard-edges`) for strict-majority collapse.
+Edge quality is separate from terrain geometry. **Fast 1x**, **Smooth 2x**, and **Ultra 4x** cast 1, 4, or 16 regularly spaced rays inside every fixed Warcraft SHD cell. In Smooth and Ultra modes, **Sun softness** distributes those existing rays over a deterministic virtual sun disc, creating angular penumbra coverage without multiplying the ray count; `0°` preserves a perfectly directional hard projection and the default is `1°`. Coherent filtering passes coverage through a configurable Gaussian radius before the final binary cutoff, producing connected, rounded boundaries without visible dither dots. **Tuning...** exposes sun softness `0..5°`, radius `0..3`, coverage cutoff `20..80%`, and minimum island size `0..16`; lower cutoffs retain more partial shadow while larger radii reshape edges more aggressively. The SHD still contains only native `0x00`/`0xFF` values and cannot store true opacity or additional resolution. Ultra 4x can take roughly sixteen times the ray-casting work of Fast 1x on a large map. Turn off **Coherent filter** (or use `--hard-edges`) for strict-majority collapse.
 
 Terrain receivers use a slope-aware origin bias of 2 world units by default. This prevents raised or curved terrain from immediately intersecting its own caster triangles, which otherwise appears as scattered dark patches. **Tuning...** exposes `0..32` in 0.5-unit steps; very large values can detach contact shadows and are intended only for diagnosis. Worker threads can also be set from Auto to 32 and affect performance only.
 
@@ -151,6 +151,7 @@ Useful generation options:
 
 - `--asset-dir DIR` supplies an extracted Warcraft-style virtual asset tree;
 - `--light-x N --light-y N --light-z N` changes the default `(1, 1, -1)` light direction;
+- `--sun-softness 0..5` sets the angular radius of the virtual sun disc in degrees (default `1`; `0` restores one hard direction);
 - `--edge-samples 1|2|4` selects Fast, Smooth, or Ultra edge supersampling (default `4`);
 - `--smooth-terrain` selects the improved 2 × 2 sub-tile terrain reconstruction (default);
 - `--classic-terrain` selects the original version-1 two-triangles-per-tile reconstruction;

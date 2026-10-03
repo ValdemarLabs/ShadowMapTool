@@ -54,6 +54,36 @@ bool differsFromOne(const float value)
     return std::abs(value - 1.0F) > 0.0001F;
 }
 
+Vec2 concentricDiskSample(const float u, const float v)
+{
+    const auto x = 2.0F * u - 1.0F;
+    const auto y = 2.0F * v - 1.0F;
+    if (x == 0.0F && y == 0.0F) return {};
+
+    constexpr float quarterPi = 0.7853981633974483F;
+    constexpr float halfPi = 1.5707963267948966F;
+    float radius = 0.0F;
+    float angle = 0.0F;
+    if (std::abs(x) > std::abs(y)) {
+        radius = x;
+        angle = quarterPi * (y / x);
+    } else {
+        radius = y;
+        angle = halfPi - quarterPi * (x / y);
+    }
+    return {radius * std::cos(angle), radius * std::sin(angle)};
+}
+
+Vec3 angularLightDirection(const Vec3 center, const Vec3 basisX, const Vec3 basisY,
+                           const float tangentRadius, const float sampleX,
+                           const float sampleY)
+{
+    if (!(tangentRadius > 0.0F)) return center;
+    const auto disk = concentricDiskSample(sampleX, sampleY);
+    return normalized(center + basisX * (disk.x * tangentRadius) +
+                      basisY * (disk.y * tangentRadius));
+}
+
 } // namespace
 
 GenerationResult generateShadowMap(
@@ -67,6 +97,10 @@ GenerationResult generateShadowMap(
     if (!std::isfinite(options.rayOriginOffset) || options.rayOriginOffset < 0.0F ||
         options.rayOriginOffset > 32.0F) {
         throw std::invalid_argument("ray origin offset must be from 0 to 32");
+    }
+    if (!std::isfinite(options.sunAngularRadiusDegrees) ||
+        options.sunAngularRadiusDegrees < 0.0F || options.sunAngularRadiusDegrees > 5.0F) {
+        throw std::invalid_argument("sun angular radius must be from 0 to 5 degrees");
     }
     if (options.gaussianRadius > 3U) {
         throw std::invalid_argument("Gaussian radius must be from 0 to 3");
@@ -313,6 +347,12 @@ GenerationResult generateShadowMap(
     if (dot(rayDirection, rayDirection) == 0.0F || rayDirection.z <= 0.0F) {
         throw std::invalid_argument("light direction must be finite and point toward the terrain (negative Z)");
     }
+    const Vec3 lightReference = std::abs(rayDirection.z) < 0.999F
+        ? Vec3{0.0F, 0.0F, 1.0F} : Vec3{1.0F, 0.0F, 0.0F};
+    const Vec3 lightBasisX = normalized(cross(rayDirection, lightReference));
+    const Vec3 lightBasisY = normalized(cross(rayDirection, lightBasisX));
+    constexpr float degreesToRadians = 0.017453292519943295F;
+    const auto sunTangentRadius = std::tan(options.sunAngularRadiusDegrees * degreesToRadians);
 
     const auto workerCount = options.threadCount == 0U
         ? std::max(1U, std::thread::hardware_concurrency())
@@ -374,9 +414,13 @@ GenerationResult generateShadowMap(
                                 heightLeft - heightRight, heightBottom - heightTop,
                                 normalStep * 2.0F});
                             const Vec3 surface{worldX, worldY, height};
+                            const auto sampleRayDirection = angularLightDirection(
+                                rayDirection, lightBasisX, lightBasisY, sunTangentRadius,
+                                fractionX, fractionY);
                             const Vec3 origin = surface + surfaceNormal * options.rayOriginOffset +
-                                                rayDirection * (options.rayOriginOffset * 0.25F);
-                            if (scene.intersects(origin, rayDirection,
+                                                sampleRayDirection *
+                                                    (options.rayOriginOffset * 0.25F);
+                            if (scene.intersects(origin, sampleRayDirection,
                                                  std::max(0.05F, options.rayOriginOffset * 0.25F))) {
                                 ++occludedSamples;
                             }
