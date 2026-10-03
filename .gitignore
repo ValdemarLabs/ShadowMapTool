@@ -2,6 +2,7 @@
 /out/
 /dist/
 /logs/
+/_dev/
 .vs/
 *.w3shadow.tmp*
 *.w3shadow.bak*
