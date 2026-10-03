@@ -9,10 +9,13 @@ This changelog records notable ShadowMapTool releases and development changes.
 - Added MDX material/geoset resolution so blend, additive, add-alpha, modulate, team-glow, invisible, and zero-alpha layers no longer cast opaque static shadows.
 - Added BLP1/BLP2 alpha decoding and UV-aware ray tests for Warcraft III Transparent material layers; transparent texels now let shadow rays continue through the model.
 - Added transformed placement-scale and caster-bounds diagnostics to GUI session logs and CLI summaries.
+- Added position and World Editor placement ID details to oversized-caster warnings so problematic environment models can be located directly in the map.
 - Added a maximum caster-span safety control (16,384 world units by default) to exclude giant domes, sky shells, and backdrop models that would otherwise darken a large part of the map. The GUI can disable the limit with **Unlimited**, and the CLI exposes `--max-caster-span`.
 
 ### Fixed
 
+- Preserved regular custom-object model overrides when `war3mapSkin.w3d` overlays the same doodad rawcode, preventing stock base models from being used for imported-model doodads.
+- Honored integer **Has a Shadow (SD)** overrides from modern doodad and destructible object data in addition to legacy string shadow fields.
 - Prevented disconnected raw shadow components from merging solely because their Gaussian-filter neighborhoods overlap.
 - Preserved each placed doodad/destructible's independent X/Y/Z scale through transformed caster geometry and added regression coverage for it.
 

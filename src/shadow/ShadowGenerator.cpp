@@ -273,7 +273,9 @@ GenerationResult generateShadowMap(
                     std::ostringstream warning;
                     warning << "oversized caster " << placement.rawcode << " [" << selectedPath
                             << "] scale (" << placement.scale.x << ',' << placement.scale.y << ','
-                            << placement.scale.z << ") horizontal span " << horizontalSpan
+                            << placement.scale.z << ") position (" << placement.position.x << ','
+                            << placement.position.y << ',' << placement.position.z << ") editor ID "
+                            << placement.editorId << " horizontal span " << horizontalSpan
                             << " exceeds " << options.maximumCasterHorizontalSpan
                             << "; excluded (set maximum caster span to 0 to allow it)";
                     ++oversizedCasterWarnings[warning.str()];

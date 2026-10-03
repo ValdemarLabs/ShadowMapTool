@@ -435,6 +435,65 @@ void testObjectShadowOverride()
     require(definition != nullptr, "custom destructible object was not decoded");
     require(!definition->castsShadow, "empty bshd override did not disable object shadow");
 
+    std::vector<std::byte> doodadData;
+    appendU32(doodadData, 3U);
+    appendU32(doodadData, 0U);
+    appendU32(doodadData, 1U);
+    appendTag(doodadData, "Dofv");
+    appendTag(doodadData, "D123");
+    appendU32(doodadData, 1U);
+    appendU32(doodadData, 0U);
+    appendU32(doodadData, 1U);
+    appendTag(doodadData, "dfil"); appendU32(doodadData, 3U);
+    appendU32(doodadData, 0U); appendU32(doodadData, 0U);
+    appendCString(doodadData, "Custom\\Doodad.mdx");
+    appendTag(doodadData, "D123");
+
+    std::vector<std::byte> doodadSkinData;
+    appendU32(doodadSkinData, 3U);
+    appendU32(doodadSkinData, 0U);
+    appendU32(doodadSkinData, 1U);
+    appendTag(doodadSkinData, "Dofv");
+    appendTag(doodadSkinData, "D123");
+    appendU32(doodadSkinData, 1U);
+    appendU32(doodadSkinData, 0U);
+    appendU32(doodadSkinData, 1U);
+    appendTag(doodadSkinData, "dnam"); appendU32(doodadSkinData, 3U);
+    appendU32(doodadSkinData, 0U); appendU32(doodadSkinData, 0U);
+    appendCString(doodadSkinData, "Custom name");
+    appendTag(doodadSkinData, "D123");
+
+    w3shadow::ObjectDatabase doodadObjects;
+    doodadObjects.applyMapOverrides(doodadData, std::nullopt);
+    doodadObjects.applyMapOverrides(doodadSkinData, std::nullopt);
+    const auto* doodadDefinition = doodadObjects.find("D123");
+    require(doodadDefinition != nullptr &&
+            doodadDefinition->modelPath == "Custom\\Doodad.mdx",
+            "skin overlay discarded the custom doodad model override");
+
+    std::vector<std::byte> noShadowData;
+    appendU32(noShadowData, 3U);
+    appendU32(noShadowData, 0U);
+    appendU32(noShadowData, 1U);
+    appendTag(noShadowData, "Dofv");
+    appendTag(noShadowData, "D124");
+    appendU32(noShadowData, 1U);
+    appendU32(noShadowData, 0U);
+    appendU32(noShadowData, 2U);
+    appendTag(noShadowData, "dfil"); appendU32(noShadowData, 3U);
+    appendU32(noShadowData, 0U); appendU32(noShadowData, 0U);
+    appendCString(noShadowData, "Custom\\NoShadow.mdx");
+    appendTag(noShadowData, "D124");
+    appendTag(noShadowData, "dshd"); appendU32(noShadowData, 0U);
+    appendU32(noShadowData, 0U); appendU32(noShadowData, 0U);
+    appendU32(noShadowData, 0U);
+    appendTag(noShadowData, "D124");
+
+    doodadObjects.applyMapOverrides(noShadowData, std::nullopt);
+    const auto* noShadowDefinition = doodadObjects.find("D124");
+    require(noShadowDefinition != nullptr && !noShadowDefinition->castsShadow,
+            "integer Has a Shadow override did not disable doodad shadow casting");
+
 #ifdef W3SHADOW_CURRENT_MAP_FIXTURE
     const w3shadow::MapArchive currentMap(std::filesystem::path(W3SHADOW_CURRENT_MAP_FIXTURE));
     w3shadow::ObjectDatabase currentObjects;

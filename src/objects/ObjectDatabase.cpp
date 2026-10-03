@@ -262,8 +262,15 @@ void ObjectDatabase::applyObjectFile(const std::span<const std::byte> bytes, con
             const auto newId = reader.readTag("new rawcode");
             const auto targetId = newId == std::string(4, '\0') ? baseId : newId;
             ObjectDefinition definition;
-            if (const auto existing = definitions_.find(baseId); existing != definitions_.end()) {
-                definition = existing->second;
+            // Skin object files are overlays. When a regular map object file has already
+            // created the target rawcode, retain its model and other fields that the skin
+            // record does not repeat instead of reconstructing it from the stock base.
+            const auto target = definitions_.find(targetId);
+            const auto base = definitions_.find(baseId);
+            if (target != definitions_.end()) {
+                definition = target->second;
+            } else if (base != definitions_.end()) {
+                definition = base->second;
             }
             definition.rawcode = targetId;
             definition.destructible = destructible;
@@ -284,6 +291,10 @@ void ObjectDatabase::applyObjectFile(const std::span<const std::byte> bytes, con
                 if (type == 0U) {
                     const auto value = reader.readI32("integer value");
                     if (field == "dvar" || field == "bvar") definition.variationCount = static_cast<std::uint32_t>(std::max(value, 1));
+                    if (field == "dshd" || field == "bshd") {
+                        definition.castsShadow = value != 0;
+                        if (!definition.castsShadow) definition.shadowTexture.clear();
+                    }
                 } else if (type == 1U || type == 2U) {
                     static_cast<void>(reader.readF32("real value"));
                 } else if (type == 3U) {
