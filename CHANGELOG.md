@@ -6,6 +6,8 @@ This changelog records notable ShadowMapTool releases and development changes.
 
 ### Added
 
+- Added per-setting **Info** buttons to Advanced shadow tuning with behavior, range, and practical value examples.
+- Added versioned `.w3sp` shadow presets that save and load the complete calculation configuration from the `Presets` folder beside the application.
 - Added deterministic angular sun-disc sampling with a **Sun softness** GUI slider and `--sun-softness 0..5` CLI option, allowing sub-cell rays to form more natural projected contours without increasing the ray count.
 - Added MDX material/geoset resolution so blend, additive, add-alpha, modulate, team-glow, invisible, and zero-alpha layers no longer cast opaque static shadows.
 - Added BLP1/BLP2 alpha decoding and UV-aware ray tests for Warcraft III Transparent material layers; transparent texels now let shadow rays continue through the model.
@@ -22,6 +24,7 @@ This changelog records notable ShadowMapTool releases and development changes.
 
 ### Changed
 
+- Raised the default sun projection from `(1, 1, -1)` to `(1, 1, -2)`, halving horizontal displacement from elevated bridges, trees, and tall doodads while retaining an editable light vector.
 - Model parser warnings now include the resolved asset path, and missing/unsupported alpha textures are reported explicitly before the safe opaque fallback is used.
 
 ## 2.10.2026

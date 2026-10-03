@@ -88,8 +88,8 @@ To calculate the complete shadowmap:
 3. Choose whether Terrain, Doodads, and Destructibles contribute shadows.
 4. Choose **Smooth sub-tile** (default) or **Classic triangles** for terrain geometry.
 5. Choose **Ultra 4x** edge quality for the smoothest outline, **Smooth 2x** for a faster compromise, or **Fast 1x** for the original single-ray behavior.
-6. Open **Tuning...** to adjust filtering, sub-cell coverage, terrain ray bias, alpha-terrain handling, or performance. The recommended defaults suit most maps.
-7. Keep the default light-travel vector `(1, 1, -1)`, or enter custom X/Y/Z values. Use **Sun softness** in **Tuning...** to shape less rigid projected contours.
+6. Open **Tuning...** to adjust filtering, sub-cell coverage, terrain ray bias, alpha-terrain handling, or performance. Each setting has an **Info** button with behavior and value examples. The recommended defaults suit most maps.
+7. Keep the default light-travel vector `(1, 1, -2)`, or enter custom X/Y/Z values. The higher default sun halves the horizontal displacement produced by `(1, 1, -1)`, keeping elevated bridges and tall trees better anchored. Use **Sun softness** in **Tuning...** to shape less rigid projected contours; softness does not shorten the projection.
 8. Select **Calculate shadows**. This renders the complete proposed SHD in memory and does not modify or create a map.
 9. Inspect the calculated full-map preview and warning count. Change settings and calculate again if needed.
 10. Keep **Save as copy** selected for the first run, then select **Save to map** and choose the output map.
@@ -100,6 +100,8 @@ To calculate the complete shadowmap:
 Edge quality is separate from terrain geometry. **Fast 1x**, **Smooth 2x**, and **Ultra 4x** cast 1, 4, or 16 regularly spaced rays inside every fixed Warcraft SHD cell. In Smooth and Ultra modes, **Sun softness** distributes those existing rays over a deterministic virtual sun disc, creating angular penumbra coverage without multiplying the ray count; `0°` preserves a perfectly directional hard projection and the default is `1°`. Coherent filtering passes coverage through a configurable Gaussian radius before the final binary cutoff, producing connected, rounded boundaries without visible dither dots. **Tuning...** exposes sun softness `0..5°`, radius `0..3`, coverage cutoff `20..80%`, and minimum island size `0..16`; lower cutoffs retain more partial shadow while larger radii reshape edges more aggressively. The SHD still contains only native `0x00`/`0xFF` values and cannot store true opacity or additional resolution. Ultra 4x can take roughly sixteen times the ray-casting work of Fast 1x on a large map. Turn off **Coherent filter** (or use `--hard-edges`) for strict-majority collapse.
 
 Terrain receivers use a slope-aware origin bias of 2 world units by default. This prevents raised or curved terrain from immediately intersecting its own caster triangles, which otherwise appears as scattered dark patches. **Tuning...** exposes `0..32` in 0.5-unit steps; very large values can detach contact shadows and are intended only for diagnosis. Worker threads can also be set from Auto to 32 and affect performance only.
+
+**Save preset** and **Load preset** in **Tuning...** preserve the complete shadow-calculation configuration, including caster toggles, terrain mode, edge quality, light vector, filtering, cleanup, and performance settings. Versioned `.w3sp` files are stored in the `Presets` folder beside `w3shadow-gui.exe`; invalid, incomplete, or out-of-range files are rejected without partially changing the current settings.
 
 Placed doodad/destructible scale is applied independently on X, Y, and Z before rotation and translation. **Maximum caster span** defaults to 16,384 world units and excludes unusually large enclosing domes, sky shells, and backdrop models before ray casting; these models otherwise create map-sized dark regions even when their visible surface is mostly outside the camera. The session log names every excluded rawcode/model and its transformed scale/span. Set the control to **Unlimited** or pass `--max-caster-span 0` when a deliberately enormous model should cast a shadow. Nearby ordinary shadows are not unioned during geometry processing, and coherent Gaussian filtering keeps disconnected raw shadow components separate so blur alone cannot bridge them.
 
@@ -150,7 +152,7 @@ w3shadow generate MyMap.w3x `
 Useful generation options:
 
 - `--asset-dir DIR` supplies an extracted Warcraft-style virtual asset tree;
-- `--light-x N --light-y N --light-z N` changes the default `(1, 1, -1)` light direction;
+- `--light-x N --light-y N --light-z N` changes the default `(1, 1, -2)` light direction;
 - `--sun-softness 0..5` sets the angular radius of the virtual sun disc in degrees (default `1`; `0` restores one hard direction);
 - `--edge-samples 1|2|4` selects Fast, Smooth, or Ultra edge supersampling (default `4`);
 - `--smooth-terrain` selects the improved 2 × 2 sub-tile terrain reconstruction (default);

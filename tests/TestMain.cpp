@@ -78,6 +78,11 @@ void appendCString(std::vector<std::byte>& bytes, const char* value)
 
 void testShadowMap()
 {
+    const w3shadow::GenerationOptions defaults;
+    require(defaults.lightDirection.x == 1.0F && defaults.lightDirection.y == 1.0F &&
+                defaults.lightDirection.z == -2.0F,
+            "default light direction does not use the higher sun projection");
+
     w3shadow::ShadowMap map(2, 3);
     require(map.widthPixels() == 8 && map.heightPixels() == 12, "wrong SHD dimensions");
     require(map.bytes().size() == 96, "wrong SHD byte count");

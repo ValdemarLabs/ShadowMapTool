@@ -18,7 +18,7 @@ enum class ShadowCoverageMode {
 };
 
 struct GenerationOptions {
-    Vec3 lightDirection{1.0F, 1.0F, -1.0F};
+    Vec3 lightDirection{1.0F, 1.0F, -2.0F};
     float sunAngularRadiusDegrees = 1.0F;
     std::uint32_t threadCount = 0;
     std::uint32_t shadowSampleGrid = 4;

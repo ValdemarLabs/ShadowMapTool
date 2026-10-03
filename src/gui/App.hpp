@@ -80,7 +80,19 @@ private:
         AdvancedMinimumIsland,
         AdvancedMaximumCasterSpan,
         AdvancedThreads,
+        AdvancedCoherentFilterInfo,
+        AdvancedAlphaTerrainInfo,
+        AdvancedCliffWallsInfo,
+        AdvancedGaussianRadiusInfo,
+        AdvancedCoverageThresholdInfo,
+        AdvancedSunSoftnessInfo,
+        AdvancedRayBiasInfo,
+        AdvancedMinimumIslandInfo,
+        AdvancedMaximumCasterSpanInfo,
+        AdvancedThreadsInfo,
         AdvancedReset,
+        AdvancedLoadPreset,
+        AdvancedSavePreset,
         AdvancedClose,
         Count
     };
@@ -118,8 +130,12 @@ private:
         D2D1_RECT_F helpClose{};
         D2D1_RECT_F status{};
         std::array<D2D1_RECT_F, 3> advancedToggles{};
+        std::array<D2D1_RECT_F, 3> advancedToggleInfo{};
         std::array<D2D1_RECT_F, 7> advancedSliders{};
+        std::array<D2D1_RECT_F, 7> advancedSliderInfo{};
         D2D1_RECT_F advancedReset{};
+        D2D1_RECT_F advancedLoadPreset{};
+        D2D1_RECT_F advancedSavePreset{};
         D2D1_RECT_F advancedClose{};
     };
 
@@ -161,7 +177,11 @@ private:
     void initializeSessionLog();
     void logEvent(StatusKind kind, std::wstring_view message);
     void openLogsFolder();
+    void showAdvancedInfo(Target target) const;
+    void loadShadowPreset();
+    void saveShadowPreset();
     [[nodiscard]] Vec3 readLightDirection() const;
+    void setLightDirection(Vec3 direction);
 
     void setStatus(std::wstring message, StatusKind kind);
     void showError(const std::wstring& action, const std::exception& error);

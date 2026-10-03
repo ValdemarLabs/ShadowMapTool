@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -25,9 +26,12 @@
 #include <cwctype>
 #include <exception>
 #include <iomanip>
+#include <locale>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace w3shadow::gui {
@@ -345,6 +349,148 @@ std::optional<std::filesystem::path> saveFileDialog(
     return result;
 }
 
+std::optional<std::filesystem::path> openPresetDialog(
+    HWND owner, const std::filesystem::path& folder)
+{
+    ComPtr<IFileOpenDialog> dialog;
+    if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
+                                IID_PPV_ARGS(&dialog)))) {
+        throw std::runtime_error("Unable to create the Windows open dialog");
+    }
+
+    const COMDLG_FILTERSPEC filters[] = {
+        {L"ShadowMap Tool presets", L"*.w3sp"},
+        {L"All files", L"*.*"}};
+    dialog->SetFileTypes(static_cast<UINT>(std::size(filters)), filters);
+    dialog->SetTitle(L"Load shadow preset");
+    FILEOPENDIALOGOPTIONS options = 0;
+    dialog->GetOptions(&options);
+    dialog->SetOptions(options | FOS_FILEMUSTEXIST | FOS_PATHMUSTEXIST);
+    ComPtr<IShellItem> initialFolder;
+    if (SUCCEEDED(SHCreateItemFromParsingName(folder.c_str(), nullptr,
+                                               IID_PPV_ARGS(&initialFolder)))) {
+        dialog->SetFolder(initialFolder.Get());
+    }
+
+    const HRESULT shown = dialog->Show(owner);
+    if (shown == HRESULT_FROM_WIN32(ERROR_CANCELLED)) return std::nullopt;
+    if (FAILED(shown)) throw std::runtime_error("The Windows open dialog failed");
+
+    ComPtr<IShellItem> item;
+    if (FAILED(dialog->GetResult(&item))) throw std::runtime_error("No preset was selected");
+    PWSTR path = nullptr;
+    if (FAILED(item->GetDisplayName(SIGDN_FILESYSPATH, &path))) {
+        throw std::runtime_error("Unable to read the selected preset path");
+    }
+    const std::filesystem::path result(path);
+    CoTaskMemFree(path);
+    return result;
+}
+
+std::filesystem::path presetDirectory()
+{
+    const auto directory = executableDirectory();
+    if (!directory) throw std::runtime_error("Unable to locate the application folder");
+    const auto presets = *directory / L"Presets";
+    std::error_code error;
+    std::filesystem::create_directories(presets, error);
+    if (error || !std::filesystem::is_directory(presets)) {
+        throw std::runtime_error("Unable to create the Presets folder beside the application");
+    }
+    return presets;
+}
+
+void validatePresetPath(
+    const std::filesystem::path& path, const std::filesystem::path& directory)
+{
+    std::error_code error;
+    if (!std::filesystem::equivalent(path.parent_path(), directory, error) || error) {
+        throw std::runtime_error("Shadow presets must be stored directly in the application Presets folder");
+    }
+    auto extension = path.extension().wstring();
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+                   [](const wchar_t character) {
+                       return static_cast<wchar_t>(std::towlower(character));
+                   });
+    if (extension != L".w3sp") {
+        throw std::runtime_error("Shadow preset files must use the .w3sp extension");
+    }
+}
+
+std::unordered_map<std::string, std::string> parsePresetText(
+    const std::span<const std::byte> bytes)
+{
+    if (bytes.size() > 64U * 1024U) throw std::runtime_error("Preset exceeds 64 KiB");
+    const std::string text(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    std::unordered_map<std::string, std::string> values;
+    std::istringstream input(text);
+    std::string line;
+    while (std::getline(input, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.empty() || line.front() == '#') continue;
+        const auto equals = line.find('=');
+        if (equals == std::string::npos || equals == 0U) {
+            throw std::runtime_error("Preset contains an invalid line");
+        }
+        values[line.substr(0U, equals)] = line.substr(equals + 1U);
+    }
+    return values;
+}
+
+const std::string& requiredPresetValue(
+    const std::unordered_map<std::string, std::string>& values,
+    const std::string& key)
+{
+    const auto found = values.find(key);
+    if (found == values.end()) throw std::runtime_error("Preset is missing '" + key + "'");
+    return found->second;
+}
+
+bool presetBool(
+    const std::unordered_map<std::string, std::string>& values,
+    const std::string& key)
+{
+    const auto& value = requiredPresetValue(values, key);
+    if (value == "1") return true;
+    if (value == "0") return false;
+    throw std::runtime_error("Preset value '" + key + "' must be 0 or 1");
+}
+
+std::uint32_t presetUnsigned(
+    const std::unordered_map<std::string, std::string>& values,
+    const std::string& key, const std::uint32_t minimum, const std::uint32_t maximum)
+{
+    const auto& text = requiredPresetValue(values, key);
+    std::uint32_t parsed = 0;
+    const auto result = std::from_chars(text.data(), text.data() + text.size(), parsed);
+    if (result.ec != std::errc{} || result.ptr != text.data() + text.size() ||
+        parsed < minimum || parsed > maximum) {
+        throw std::runtime_error("Preset value '" + key + "' is out of range");
+    }
+    return parsed;
+}
+
+float presetFloat(
+    const std::unordered_map<std::string, std::string>& values,
+    const std::string& key, const float minimum, const float maximum)
+{
+    const auto& text = requiredPresetValue(values, key);
+    float parsed = 0.0F;
+    const auto result = std::from_chars(text.data(), text.data() + text.size(), parsed);
+    if (result.ec != std::errc{} || result.ptr != text.data() + text.size() ||
+        !std::isfinite(parsed) ||
+        parsed < minimum || parsed > maximum) {
+        throw std::runtime_error("Preset value '" + key + "' is out of range");
+    }
+    return parsed;
+}
+
+bool validLightDirection(const Vec3 direction)
+{
+    const auto rayDirection = normalized(direction * -1.0F);
+    return dot(rayDirection, rayDirection) > 0.0F && rayDirection.z > 0.0F;
+}
+
 bool isMapExtension(std::filesystem::path path)
 {
     auto extension = path.extension().wstring();
@@ -470,7 +616,7 @@ bool App::createWindow(HINSTANCE instance, const int showCommand)
 
     dpi_ = GetDpiForWindow(window_);
     editBrush_ = CreateSolidBrush(RGB(24, 33, 54));
-    constexpr std::array<const wchar_t*, 3> defaults{L"1", L"1", L"-1"};
+    constexpr std::array<const wchar_t*, 3> defaults{L"1", L"1", L"-2"};
     for (std::size_t index = 0; index < lightEdits_.size(); ++index) {
         lightEdits_[index] = CreateWindowExW(
             WS_EX_CLIENTEDGE, L"EDIT", defaults[index],
@@ -957,15 +1103,29 @@ App::Layout App::calculateLayout() const
             advancedLeft + 24.0F + static_cast<float>(index) * (toggleWidth + 10.0F) +
                 toggleWidth,
             advancedTop + 140.0F);
+        layout.advancedToggleInfo[index] = D2D1::RectF(
+            layout.advancedToggles[index].right - 31.0F,
+            layout.advancedToggles[index].top + 8.0F,
+            layout.advancedToggles[index].right - 7.0F,
+            layout.advancedToggles[index].bottom - 8.0F);
     }
     for (std::size_t index = 0; index < layout.advancedSliders.size(); ++index) {
         const float top = advancedTop + 158.0F + static_cast<float>(index) * 60.0F;
         layout.advancedSliders[index] = D2D1::RectF(
             advancedLeft + 34.0F, top, advancedLeft + advancedWidth - 34.0F, top + 54.0F);
+        layout.advancedSliderInfo[index] = D2D1::RectF(
+            layout.advancedSliders[index].right - 142.0F, top,
+            layout.advancedSliders[index].right - 118.0F, top + 24.0F);
     }
     layout.advancedReset = D2D1::RectF(
         advancedLeft + 24.0F, advancedTop + advancedHeight - 58.0F,
         advancedLeft + 152.0F, advancedTop + advancedHeight - 20.0F);
+    layout.advancedLoadPreset = D2D1::RectF(
+        advancedLeft + 172.0F, advancedTop + advancedHeight - 58.0F,
+        advancedLeft + 292.0F, advancedTop + advancedHeight - 20.0F);
+    layout.advancedSavePreset = D2D1::RectF(
+        advancedLeft + 302.0F, advancedTop + advancedHeight - 58.0F,
+        advancedLeft + 422.0F, advancedTop + advancedHeight - 20.0F);
     layout.advancedClose = D2D1::RectF(
         advancedLeft + advancedWidth - 120.0F, advancedTop + advancedHeight - 58.0F,
         advancedLeft + advancedWidth - 24.0F, advancedTop + advancedHeight - 20.0F);
@@ -997,6 +1157,20 @@ App::Target App::hitTest(const float x, const float y) const
 {
     const auto layout = calculateLayout();
     if (showAdvanced_) {
+        for (std::size_t index = 0; index < layout.advancedToggleInfo.size(); ++index) {
+            if (contains(layout.advancedToggleInfo[index], x, y)) {
+                return static_cast<Target>(
+                    static_cast<int>(Target::AdvancedCoherentFilterInfo) +
+                    static_cast<int>(index));
+            }
+        }
+        for (std::size_t index = 0; index < layout.advancedSliderInfo.size(); ++index) {
+            if (contains(layout.advancedSliderInfo[index], x, y)) {
+                return static_cast<Target>(
+                    static_cast<int>(Target::AdvancedGaussianRadiusInfo) +
+                    static_cast<int>(index));
+            }
+        }
         for (std::size_t index = 0; index < layout.advancedToggles.size(); ++index) {
             if (contains(layout.advancedToggles[index], x, y)) {
                 return static_cast<Target>(static_cast<int>(Target::AdvancedCoherentFilter) +
@@ -1010,6 +1184,8 @@ App::Target App::hitTest(const float x, const float y) const
             }
         }
         if (contains(layout.advancedReset, x, y)) return Target::AdvancedReset;
+        if (contains(layout.advancedLoadPreset, x, y)) return Target::AdvancedLoadPreset;
+        if (contains(layout.advancedSavePreset, x, y)) return Target::AdvancedSavePreset;
         return contains(layout.advancedClose, x, y) ? Target::AdvancedClose : Target::None;
     }
     if (showHelp_) return contains(layout.helpClose, x, y) ? Target::HelpClose : Target::None;
@@ -1163,14 +1339,19 @@ void App::stepSlider(const Target target, const int direction)
 void App::moveFocus(const bool backwards)
 {
     if (showAdvanced_) {
-        constexpr std::array<Target, 12> targets{
-            Target::AdvancedCoherentFilter, Target::AdvancedAlphaTerrain,
-            Target::AdvancedCliffWalls, Target::AdvancedGaussianRadius,
-            Target::AdvancedCoverageThreshold, Target::AdvancedSunSoftness,
-            Target::AdvancedRayBias,
-            Target::AdvancedMinimumIsland, Target::AdvancedMaximumCasterSpan,
-            Target::AdvancedThreads,
-            Target::AdvancedReset, Target::AdvancedClose};
+        constexpr std::array<Target, 24> targets{
+            Target::AdvancedCoherentFilter, Target::AdvancedCoherentFilterInfo,
+            Target::AdvancedAlphaTerrain, Target::AdvancedAlphaTerrainInfo,
+            Target::AdvancedCliffWalls, Target::AdvancedCliffWallsInfo,
+            Target::AdvancedGaussianRadius, Target::AdvancedGaussianRadiusInfo,
+            Target::AdvancedCoverageThreshold, Target::AdvancedCoverageThresholdInfo,
+            Target::AdvancedSunSoftness, Target::AdvancedSunSoftnessInfo,
+            Target::AdvancedRayBias, Target::AdvancedRayBiasInfo,
+            Target::AdvancedMinimumIsland, Target::AdvancedMinimumIslandInfo,
+            Target::AdvancedMaximumCasterSpan, Target::AdvancedMaximumCasterSpanInfo,
+            Target::AdvancedThreads, Target::AdvancedThreadsInfo,
+            Target::AdvancedReset, Target::AdvancedLoadPreset,
+            Target::AdvancedSavePreset, Target::AdvancedClose};
         auto iterator = std::find(targets.begin(), targets.end(), focused_);
         std::size_t index = iterator == targets.end()
             ? 0U : static_cast<std::size_t>(iterator - targets.begin());
@@ -1380,6 +1561,18 @@ void App::activate(const Target target)
     case Target::AdvancedThreads:
     case Target::AdvancedMaximumCasterSpan:
         break;
+    case Target::AdvancedCoherentFilterInfo:
+    case Target::AdvancedAlphaTerrainInfo:
+    case Target::AdvancedCliffWallsInfo:
+    case Target::AdvancedGaussianRadiusInfo:
+    case Target::AdvancedCoverageThresholdInfo:
+    case Target::AdvancedSunSoftnessInfo:
+    case Target::AdvancedRayBiasInfo:
+    case Target::AdvancedMinimumIslandInfo:
+    case Target::AdvancedMaximumCasterSpanInfo:
+    case Target::AdvancedThreadsInfo:
+        showAdvancedInfo(target);
+        break;
     case Target::AdvancedReset:
         coverageMode_ = ShadowCoverageMode::CoherentFilter;
         gaussianRadius_ = 1U;
@@ -1394,6 +1587,12 @@ void App::activate(const Target target)
         calculationDirty_ = previewKind_ == PreviewKind::Calculated;
         setStatus(L"Advanced shadow settings restored to recommended defaults.",
                   StatusKind::Neutral);
+        break;
+    case Target::AdvancedLoadPreset:
+        loadShadowPreset();
+        break;
+    case Target::AdvancedSavePreset:
+        saveShadowPreset();
         break;
     case Target::AdvancedClose:
         showAdvanced_ = false;
@@ -1690,6 +1889,208 @@ void App::exportPng()
     }
 }
 
+void App::showAdvancedInfo(const Target target) const
+{
+    const wchar_t* title = L"Shadow tuning information";
+    const wchar_t* message = L"No information is available for this setting.";
+    switch (target) {
+    case Target::AdvancedCoherentFilterInfo:
+        title = L"Coherent filter";
+        message = L"Filters neighboring coverage before SHD cells become black or white.\n\n"
+                  L"On produces rounder, connected outlines. Off uses a strict per-cell "
+                  L"majority and preserves harder pixel steps.";
+        break;
+    case Target::AdvancedAlphaTerrainInfo:
+        title = L"Ignore alpha terrain";
+        message = L"Stops completely transparent terrain textures from receiving shadows.\n\n"
+                  L"Keep this on for hidden terrain beneath custom floors or void areas. "
+                  L"Turn it off only when transparent terrain is intentionally a receiver.";
+        break;
+    case Target::AdvancedCliffWallsInfo:
+        title = L"Cliff wall casters";
+        message = L"Adds approximate vertical faces between Warcraft terrain cliff levels.\n\n"
+                  L"This is experimental: it can improve deep cliff shadows, but decorative "
+                  L"cliffs may become too dark. Off is the recommended default.";
+        break;
+    case Target::AdvancedGaussianRadiusInfo:
+        title = L"Gaussian radius";
+        message = L"Controls how many neighboring SHD cells influence a filtered outline.\n\n"
+                  L"0 disables spatial smoothing. 1 gently rounds edges. 2-3 reshape and join "
+                  L"wider edge details. It does not change model scale or shadow direction.";
+        break;
+    case Target::AdvancedCoverageThresholdInfo:
+        title = L"Sub-cell coverage cutoff";
+        message = L"Chooses how much sampled coverage is required to fill a binary SHD cell.\n\n"
+                  L"35% keeps thin branches and wider silhouettes. 45% is balanced. 60% "
+                  L"shrinks partial edge cells and produces a tighter shadow.";
+        break;
+    case Target::AdvancedSunSoftnessInfo:
+        title = L"Sun softness";
+        message = L"Spreads sub-cell rays across a virtual sun disc to vary the edge contour.\n\n"
+                  L"0 degrees is a hard directional light. 1 degree is subtle. 3-5 degrees "
+                  L"produce broader penumbra sampling. It does not shorten shadow projection.";
+        break;
+    case Target::AdvancedRayBiasInfo:
+        title = L"Terrain ray bias";
+        message = L"Moves each ray origin slightly above the terrain to prevent self-shadow acne.\n\n"
+                  L"2 is recommended. Raise it only if slopes show dark speckles. Large values "
+                  L"can detach contact shadows from objects and terrain.";
+        break;
+    case Target::AdvancedMinimumIslandInfo:
+        title = L"Minimum shadow island";
+        message = L"Removes isolated connected shadow groups smaller than this many SHD cells.\n\n"
+                  L"0 keeps every dot. 4 removes tiny artifacts. 8-16 may also erase legitimate "
+                  L"small props, leaves, or narrow shadow fragments.";
+        break;
+    case Target::AdvancedMaximumCasterSpanInfo:
+        title = L"Maximum caster span";
+        message = L"Excludes a placed model when its transformed horizontal bounds exceed the limit.\n\n"
+                  L"16384 filters giant sky shells and backdrop domes. Unlimited permits every "
+                  L"model and can create map-sized shadows. Ordinary model scale is unchanged.";
+        break;
+    case Target::AdvancedThreadsInfo:
+        title = L"Worker threads";
+        message = L"Controls parallel ray-casting work and does not alter the generated shadow.\n\n"
+                  L"Auto uses available CPU threads. A lower value leaves more CPU capacity for "
+                  L"other applications but increases calculation time.";
+        break;
+    default:
+        break;
+    }
+    MessageBoxW(window_, message, title, MB_OK | MB_ICONINFORMATION);
+}
+
+void App::saveShadowPreset()
+{
+    try {
+        const auto directory = presetDirectory();
+        const auto baseName = mapPath_ ? mapPath_->stem().wstring() : L"ShadowPreset";
+        const auto output = saveFileDialog(
+            window_, L"Save shadow preset", directory / (baseName + L".w3sp"),
+            L"ShadowMap Tool preset", L"*.w3sp", L"w3sp");
+        if (!output) return;
+        validatePresetPath(*output, directory);
+        const auto light = readLightDirection();
+        std::ostringstream stream;
+        stream.imbue(std::locale::classic());
+        stream << "# ShadowMap Tool preset\n"
+               << "version=1\n"
+               << "includeTerrain=" << includeTerrain_ << '\n'
+               << "includeDoodads=" << includeDoodads_ << '\n'
+               << "includeDestructibles=" << includeDestructibles_ << '\n'
+               << "honorIgnoreRegions=" << honorIgnoreRegions_ << '\n'
+               << "terrainGeometry="
+               << (terrainGeometry_ == TerrainGeometryMode::SmoothSubTile ? "smooth" : "classic")
+               << '\n'
+               << "shadowSampleGrid=" << shadowSampleGrid_ << '\n'
+               << std::setprecision(9)
+               << "lightX=" << light.x << '\n'
+               << "lightY=" << light.y << '\n'
+               << "lightZ=" << light.z << '\n'
+               << "coherentFilter="
+               << (coverageMode_ == ShadowCoverageMode::CoherentFilter) << '\n'
+               << "gaussianRadius=" << gaussianRadius_ << '\n'
+               << "coverageThreshold=" << coverageThreshold_ << '\n'
+               << "sunSoftness=" << sunAngularRadiusDegrees_ << '\n'
+               << "rayBias=" << rayOriginOffset_ << '\n'
+               << "minimumIsland=" << minimumShadowIslandPixels_ << '\n'
+               << "maximumCasterSpan=" << maximumCasterHorizontalSpan_ << '\n'
+               << "workerThreads=" << workerThreads_ << '\n'
+               << "ignoreAlphaTerrain=" << ignoreTransparentTerrain_ << '\n'
+               << "cliffWalls=" << cliffWalls_ << '\n';
+        const auto text = stream.str();
+        const auto bytes = std::as_bytes(std::span(text.data(), text.size()));
+        writeBinaryFileAtomic(*output, bytes, true);
+        setStatus(L"Saved shadow preset: " + output->filename().wstring(),
+                  StatusKind::Success);
+    } catch (const std::exception& error) {
+        showError(L"Save preset", error);
+    }
+}
+
+void App::loadShadowPreset()
+{
+    try {
+        const auto directory = presetDirectory();
+        const auto selected = openPresetDialog(window_, directory);
+        if (!selected) return;
+        validatePresetPath(*selected, directory);
+        const auto values = parsePresetText(readBinaryFile(*selected, 64U * 1024U));
+        if (presetUnsigned(values, "version", 1U, 1U) != 1U) {
+            throw std::runtime_error("Unsupported preset version");
+        }
+
+        const bool includeTerrain = presetBool(values, "includeTerrain");
+        const bool includeDoodads = presetBool(values, "includeDoodads");
+        const bool includeDestructibles = presetBool(values, "includeDestructibles");
+        const bool honorIgnoreRegions = presetBool(values, "honorIgnoreRegions");
+        const auto& terrainText = requiredPresetValue(values, "terrainGeometry");
+        TerrainGeometryMode terrainGeometry;
+        if (terrainText == "smooth") terrainGeometry = TerrainGeometryMode::SmoothSubTile;
+        else if (terrainText == "classic") terrainGeometry = TerrainGeometryMode::ClassicTriangulated;
+        else throw std::runtime_error("Preset terrainGeometry must be 'smooth' or 'classic'");
+        const auto sampleGrid = presetUnsigned(values, "shadowSampleGrid", 1U, 4U);
+        if (sampleGrid != 1U && sampleGrid != 2U && sampleGrid != 4U) {
+            throw std::runtime_error("Preset shadowSampleGrid must be 1, 2, or 4");
+        }
+        const Vec3 light{
+            presetFloat(values, "lightX", std::numeric_limits<float>::lowest(),
+                        std::numeric_limits<float>::max()),
+            presetFloat(values, "lightY", std::numeric_limits<float>::lowest(),
+                        std::numeric_limits<float>::max()),
+            presetFloat(values, "lightZ", std::numeric_limits<float>::lowest(),
+                        -std::numeric_limits<float>::denorm_min())};
+        if (!validLightDirection(light)) {
+            throw std::runtime_error("Preset light vector must be nonzero, finite, and point downward");
+        }
+        const bool coherentFilter = presetBool(values, "coherentFilter");
+        const auto gaussianRadius = presetUnsigned(values, "gaussianRadius", 0U, 3U);
+        const auto coverageThreshold = presetFloat(values, "coverageThreshold", 0.20F, 0.80F);
+        const auto sunSoftness = presetFloat(values, "sunSoftness", 0.0F, 5.0F);
+        const auto rayBias = presetFloat(values, "rayBias", 0.0F, 32.0F);
+        const auto minimumIsland = presetUnsigned(values, "minimumIsland", 0U, 16U);
+        const auto maximumCasterSpan = presetFloat(values, "maximumCasterSpan", 0.0F, 32768.0F);
+        const auto workerThreads = presetUnsigned(values, "workerThreads", 0U, 32U);
+        const bool ignoreAlphaTerrain = presetBool(values, "ignoreAlphaTerrain");
+        const bool cliffWalls = presetBool(values, "cliffWalls");
+
+        includeTerrain_ = includeTerrain;
+        includeDoodads_ = includeDoodads;
+        includeDestructibles_ = includeDestructibles;
+        honorIgnoreRegions_ = honorIgnoreRegions;
+        terrainGeometry_ = terrainGeometry;
+        shadowSampleGrid_ = sampleGrid;
+        setLightDirection(light);
+        coverageMode_ = coherentFilter
+            ? ShadowCoverageMode::CoherentFilter : ShadowCoverageMode::ClassicMajority;
+        gaussianRadius_ = gaussianRadius;
+        coverageThreshold_ = coverageThreshold;
+        sunAngularRadiusDegrees_ = sunSoftness;
+        rayOriginOffset_ = rayBias;
+        minimumShadowIslandPixels_ = minimumIsland;
+        maximumCasterHorizontalSpan_ = maximumCasterSpan;
+        workerThreads_ = workerThreads;
+        ignoreTransparentTerrain_ = ignoreAlphaTerrain;
+        cliffWalls_ = cliffWalls;
+        calculationDirty_ = previewKind_ == PreviewKind::Calculated;
+        setStatus(L"Loaded shadow preset: " + selected->filename().wstring(),
+                  StatusKind::Success);
+    } catch (const std::exception& error) {
+        showError(L"Load preset", error);
+    }
+}
+
+void App::setLightDirection(const Vec3 direction)
+{
+    const std::array<float, 3> values{direction.x, direction.y, direction.z};
+    for (std::size_t index = 0; index < values.size(); ++index) {
+        std::wostringstream stream;
+        stream.imbue(std::locale::classic());
+        stream << std::setprecision(std::numeric_limits<float>::max_digits10) << values[index];
+        SetWindowTextW(lightEdits_[index], stream.str().c_str());
+    }
+}
+
 Vec3 App::readLightDirection() const
 {
     Vec3 direction;
@@ -1704,6 +2105,10 @@ Vec3 App::readLightDirection() const
             throw std::invalid_argument("light vector values must be finite numbers");
         }
         *values[index] = value;
+    }
+    if (!validLightDirection(direction)) {
+        throw std::invalid_argument(
+            "light vector must be nonzero, finite, and point toward the terrain (negative Z)");
     }
     return direction;
 }
@@ -2036,7 +2441,7 @@ void App::drawSlider(
 {
     const auto normalized = std::clamp(normalizedValue, 0.0F, 1.0F);
     drawText(label, D2D1::RectF(rectangle.left, rectangle.top,
-                                rectangle.right - 120.0F, rectangle.top + 24.0F),
+                                rectangle.right - 150.0F, rectangle.top + 24.0F),
              bodyFormat_.Get(), textBrush_.Get());
     drawText(value, D2D1::RectF(rectangle.right - 112.0F, rectangle.top,
                                 rectangle.right, rectangle.top + 24.0F),
@@ -2155,7 +2560,7 @@ void App::paint()
             drawButton(layout.qualityOptions[index], qualityLabels[index], target,
                        shadowSampleGrid_ == qualityValues[index]);
         }
-        drawText(L"Light travel vector (X, Y, Z) · default 1, 1, -1",
+        drawText(L"Light travel vector (X, Y, Z) · default 1, 1, -2",
                  D2D1::RectF(layout.patternCard.left + 16.0F, layout.patternCard.top + 250.0F,
                              layout.patternCard.right - 16.0F, layout.patternCard.top + 271.0F),
                  smallFormat_.Get(), mutedBrush_.Get());
@@ -2273,6 +2678,12 @@ void App::paint()
                    Target::AdvancedAlphaTerrain, ignoreTransparentTerrain_);
         drawButton(layout.advancedToggles[2], L"Cliff wall casters",
                    Target::AdvancedCliffWalls, cliffWalls_);
+        for (std::size_t index = 0; index < layout.advancedToggleInfo.size(); ++index) {
+            const auto target = static_cast<Target>(
+                static_cast<int>(Target::AdvancedCoherentFilterInfo) +
+                static_cast<int>(index));
+            drawButton(layout.advancedToggleInfo[index], L"i", target, false);
+        }
 
         const auto radiusValue = gaussianRadius_ == 0U
             ? std::wstring(L"Off")
@@ -2315,6 +2726,12 @@ void App::paint()
         drawSlider(layout.advancedSliders[6], L"Worker threads — performance only",
                    threadsValue, Target::AdvancedThreads,
                    static_cast<float>(workerThreads_) / 32.0F);
+        for (std::size_t index = 0; index < layout.advancedSliderInfo.size(); ++index) {
+            const auto target = static_cast<Target>(
+                static_cast<int>(Target::AdvancedGaussianRadiusInfo) +
+                static_cast<int>(index));
+            drawButton(layout.advancedSliderInfo[index], L"i", target, false);
+        }
         drawText(
             L"Recommended: coherent filter on, radius 1, cutoff 45%, sun softness 1.00°, "
             L"bias 2.0, island 4, "
@@ -2324,6 +2741,8 @@ void App::paint()
                         advancedCard.right - 34.0F, advancedTop + advancedHeight - 65.0F),
             helpBodyFormat_.Get(), mutedBrush_.Get());
         drawButton(layout.advancedReset, L"Reset defaults", Target::AdvancedReset, false);
+        drawButton(layout.advancedLoadPreset, L"Load preset", Target::AdvancedLoadPreset, false);
+        drawButton(layout.advancedSavePreset, L"Save preset", Target::AdvancedSavePreset, false);
         drawButton(layout.advancedClose, L"Close", Target::AdvancedClose, false, true);
     }
 
