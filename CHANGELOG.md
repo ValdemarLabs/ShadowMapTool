@@ -2,6 +2,24 @@
 
 This changelog records notable ShadowMapTool releases and development changes.
 
+## 3.10.2026
+
+### Added
+
+- Added MDX material/geoset resolution so blend, additive, add-alpha, modulate, team-glow, invisible, and zero-alpha layers no longer cast opaque static shadows.
+- Added BLP1/BLP2 alpha decoding and UV-aware ray tests for Warcraft III Transparent material layers; transparent texels now let shadow rays continue through the model.
+- Added transformed placement-scale and caster-bounds diagnostics to GUI session logs and CLI summaries.
+- Added a maximum caster-span safety control (16,384 world units by default) to exclude giant domes, sky shells, and backdrop models that would otherwise darken a large part of the map. The GUI can disable the limit with **Unlimited**, and the CLI exposes `--max-caster-span`.
+
+### Fixed
+
+- Prevented disconnected raw shadow components from merging solely because their Gaussian-filter neighborhoods overlap.
+- Preserved each placed doodad/destructible's independent X/Y/Z scale through transformed caster geometry and added regression coverage for it.
+
+### Changed
+
+- Model parser warnings now include the resolved asset path, and missing/unsupported alpha textures are reported explicitly before the safe opaque fallback is used.
+
 ## 2.10.2026
 
 ShadowMapTool 1.3.1 is a shadow-quality, terrain-masking, and workflow patch release.
@@ -131,8 +149,8 @@ ShadowMapTool 1.3.0 is the first standalone public release.
 
 ## Current limitations
 
-- Model shadows use parsed MDX bind/default-pose geometry and treat parsed geoset triangles as opaque.
-- Animated visibility and texture-alpha/material filtering are not reproduced yet.
+- Model shadows use parsed MDX bind/default-pose geometry; animated visibility and texture animation are not reproduced.
+- Transparent MDX layers are UV alpha-tested when their BLP resolves. Missing/unsupported model textures are logged and fall back to opaque geometry.
 - Fully transparent alpha terrain is excluded; partially transparent/non-BLP terrain requires an `IgnoreShadow` region.
 - Approximate cliff-layer walls are optional; exact decorative cliff models and World Editor shadow post-processing are not reproduced.
 - World Editor and ShadowMapTool results can therefore differ even when SHD orientation and byte polarity are correct.

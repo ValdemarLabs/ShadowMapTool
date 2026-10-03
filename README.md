@@ -10,6 +10,7 @@ The implementation includes:
 - stock object-data resolution from SLK data plus current Reforged doodad/destructible skin profiles;
 - map-imported MDX priority, extracted-directory fallback, runtime Warcraft CASC access, and direct classic MPQ access;
 - transformed doodad/destructible geometry, a median-split BVH, model caching, and parallel ray casting;
+- MDX material filtering plus UV-aware alpha tests for paletted/JPEG BLP1 and paletted/DXT/raw BLP2 model textures;
 - 1x, 2x, or 4x shadow-cell supersampling with coherent coverage filtering for cleaner edges;
 - automatic fully transparent terrain-receiver exclusion and optional experimental cliff-wall reconstruction;
 - case-insensitive `IgnoreShadow...` region exclusion;
@@ -100,6 +101,8 @@ Edge quality is separate from terrain geometry. **Fast 1x**, **Smooth 2x**, and 
 
 Terrain receivers use a slope-aware origin bias of 2 world units by default. This prevents raised or curved terrain from immediately intersecting its own caster triangles, which otherwise appears as scattered dark patches. **Tuning...** exposes `0..32` in 0.5-unit steps; very large values can detach contact shadows and are intended only for diagnosis. Worker threads can also be set from Auto to 32 and affect performance only.
 
+Placed doodad/destructible scale is applied independently on X, Y, and Z before rotation and translation. **Maximum caster span** defaults to 16,384 world units and excludes unusually large enclosing domes, sky shells, and backdrop models before ray casting; these models otherwise create map-sized dark regions even when their visible surface is mostly outside the camera. The session log names every excluded rawcode/model and its transformed scale/span. Set the control to **Unlimited** or pass `--max-caster-span 0` when a deliberately enormous model should cast a shadow. Nearby ordinary shadows are not unioned during geometry processing, and coherent Gaussian filtering keeps disconnected raw shadow components separate so blur alone cannot bridge them.
+
 The **In place + backup** mode asks for confirmation and preserves a numbered `.w3shadow.bak` copy. Opening a map previews its existing SHD, which can be empty; **Calculate shadows** replaces that view with the newly rendered complete SHD before anything is saved. Changing a calculation option marks the result stale and disables saving until it is recalculated. Diagnostic patterns are only available while **Test mode** is on. **Export SHD** and **Export PNG** export whichever full-map preview is currently shown.
 
 Regions whose names start with `IgnoreShadow` clear their exact World Editor rectangle contents when **IgnoreShadow rects** is enabled. Version 1.3 parsed the W3R coordinate fields in the wrong order; development builds after 1.3 correct that displaced/transposed exclusion. To suppress an unwanted object shadow, set that doodad/destructible's **Has shadow** field to **False** in Object Editor before calculating.
@@ -155,6 +158,7 @@ Useful generation options:
 - `--gaussian-radius 0..3` sets the coherent spatial-filter radius (default `1`; `0` disables spatial blur);
 - `--coverage-threshold 0..1` sets the final filled-cell cutoff (default `0.45`);
 - `--min-island-size 0..64` removes smaller connected shadow islands (default `4`; `0` disables cleanup);
+- `--max-caster-span 0..131072` excludes a placed model whose transformed X/Y span exceeds the limit (default `16384`; `0` disables the limit);
 - `--ray-bias N` adjusts slope-aware self-shadow protection from `0` to `32` (default `2`);
 - `--cliff-walls` enables experimental discrete cliff-layer wall occluders;
 - `--no-alpha-terrain-mask` disables fully transparent terrain receiver detection;
@@ -196,8 +200,8 @@ The tool stores working previews top-to-bottom and reverses rows only at the War
 
 ## Current limitations
 
-The generator uses the MDX bind/default pose and still treats parsed geoset triangles as opaque. Animated visibility and texture-alpha/material filtering for doodad/destructible models are not reproduced yet. Fully transparent terrain receivers are excluded automatically. Approximate cliff-layer walls are optional and disabled by default; exact decorative cliff-model protrusions and World Editor's undocumented post-processing remain compatibility work that needs isolated in-game reference maps.
+The generator uses the MDX bind/default pose. It excludes non-shadow visual-effect materials and alpha-tests Transparent layers when their BLP texture resolves, but animated visibility, texture animation, and every replaceable/dynamic texture behavior are not reconstructed. A missing or unsupported alpha texture is reported and safely falls back to opaque geometry. Fully transparent terrain receivers are excluded automatically. Approximate cliff-layer walls are optional and disabled by default; exact decorative cliff-model protrusions and World Editor's undocumented post-processing remain compatibility work that needs isolated in-game reference maps.
 
-The paired 64 x 64 reference maps in `tests/fixtures/reference-maps/` establish that SHD orientation and byte polarity are correct, but also quantify the current rendering difference: World Editor writes 2,050 shadowed samples while the version-2 Smooth sub-tile/Fast 1x fixture writes 4,631. Their intersection-over-union is 29.4%. Classic triangles at Fast 1x is somewhat closer on this mixed scene (33.0%), so Smooth sub-tile should be understood as a terrain-facet reduction feature, not a World Editor matching mode. The remaining difference is consistent with World Editor selecting posed/visible/material-aware model surfaces and handling cliff geometry differently; further behavior changes need isolated terrain, cliff, opaque-model, and alpha-tested-model reference pairs rather than tuning to this single mixed map.
+The paired 64 x 64 reference maps in `tests/fixtures/reference-maps/` establish that SHD orientation and byte polarity are correct, but also quantify the older version-2 rendering difference: World Editor writes 2,050 shadowed samples while the stored Smooth sub-tile/Fast 1x fixture writes 4,631. Their intersection-over-union is 29.4%. Classic triangles at Fast 1x was somewhat closer on that mixed scene (33.0%). Those fixtures predate material/alpha filtering and should not be treated as current quality benchmarks; further World Editor matching work still needs isolated terrain, cliff, opaque-model, alpha-tested-model, and animated-visibility reference pairs.
 
 The format, archive, parser, BVH, GUI-smoke, production 50,118-placement DOO fixture, current-map DOO/W3B/W3D/W3R, Object Editor shadow override, and terrain-only end-to-end paths are automated. The installed-Warcraft integration test validates stock SLK/profile and MDX resolution when a Warcraft III installation is available.

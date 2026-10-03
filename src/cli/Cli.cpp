@@ -58,6 +58,7 @@ struct Options {
     std::uint32_t gaussianRadius = 1;
     float coverageThreshold = 0.45F;
     std::uint32_t minimumShadowIslandPixels = 4;
+    float maximumCasterHorizontalSpan = 16384.0F;
     std::uint32_t shadowSampleGrid = 4;
     TerrainGeometryMode terrainGeometry = TerrainGeometryMode::SmoothSubTile;
     ShadowCoverageMode coverageMode = ShadowCoverageMode::CoherentFilter;
@@ -79,7 +80,7 @@ void printHelp()
         "  generate MAP [--output MAP | --in-place] [--war3-dir DIR] [--asset-dir DIR]\n"
         "               [--light-x N --light-y N --light-z N] [--ray-bias N] [--threads N]\n"
         "               [--gaussian-radius 0..3] [--coverage-threshold 0..1] [--min-island-size 0..64]\n"
-        "               [--edge-samples 1|2|4]\n"
+        "               [--max-caster-span 0..131072] [--edge-samples 1|2|4]\n"
         "               [--smooth-terrain | --classic-terrain] [--hard-edges]\n"
         "               [--no-terrain] [--no-doodads] [--no-destructibles]\n"
         "               [--cliff-walls] [--no-alpha-terrain-mask]\n"
@@ -193,6 +194,13 @@ Options parseOptions(const int argc, char* argv[], const int first)
             if (options.minimumShadowIslandPixels > 64U) {
                 throw std::invalid_argument(
                     "--min-island-size requires a value from 0 to 64");
+            }
+        } else if (argument == "--max-caster-span") {
+            options.maximumCasterHorizontalSpan = parseFiniteFloat(requireValue(argument), argument);
+            if (options.maximumCasterHorizontalSpan < 0.0F ||
+                options.maximumCasterHorizontalSpan > 131072.0F) {
+                throw std::invalid_argument(
+                    "--max-caster-span requires a value from 0 to 131072");
             }
         } else if (argument == "--smooth-terrain") {
             options.terrainGeometry = TerrainGeometryMode::SmoothSubTile;
@@ -501,6 +509,7 @@ int commandGenerate(const int argc, char* argv[])
     generation.coverageThreshold = options.coverageThreshold;
     generation.minimumShadowIslandPixels = options.minimumShadowIslandPixels;
     generation.destructibles = options.destructibles;
+    generation.maximumCasterHorizontalSpan = options.maximumCasterHorizontalSpan;
     generation.honorIgnoreShadowRegions = options.honorIgnoreShadowRegions;
     generation.ignoreTransparentTerrain = options.ignoreTransparentTerrain;
     auto result = generateShadowMap(archive, assets, generation);
@@ -523,13 +532,33 @@ int commandGenerate(const int argc, char* argv[])
               << result.stats.unresolvedPlacements << " unresolved, "
               << result.stats.uniqueModels << " unique models, "
               << result.stats.triangles << " triangles ("
-              << result.stats.cliffWallTriangles << " cliff-wall), "
+              << result.stats.cliffWallTriangles << " cliff-wall, "
+              << result.stats.materialFilteredTriangles << " material-filtered, "
+              << result.stats.alphaTestedTriangles << " alpha-tested), "
+              << result.stats.alphaTexturesLoaded << " alpha textures, "
+              << result.stats.alphaTexturesUnavailable << " alpha fallbacks, "
+              << result.stats.oversizedCasterPlacements << " oversized casters excluded, "
               << result.stats.transparentTerrainTypes << " transparent terrain types\n"
+              << "Scale: " << result.stats.nonUnitScalePlacements << " non-unit placements, range ("
+              << result.stats.minimumPlacementScale.x << ','
+              << result.stats.minimumPlacementScale.y << ','
+              << result.stats.minimumPlacementScale.z << ")..("
+              << result.stats.maximumPlacementScale.x << ','
+              << result.stats.maximumPlacementScale.y << ','
+              << result.stats.maximumPlacementScale.z << "), largest caster "
+              << result.stats.largestCasterRawcode << " ["
+              << result.stats.largestCasterModelPath << "] scale ("
+              << result.stats.largestCasterScale.x << ',' << result.stats.largestCasterScale.y
+              << ',' << result.stats.largestCasterScale.z << ") extent ("
+              << result.stats.largestCasterExtent.x << ',' << result.stats.largestCasterExtent.y
+              << ',' << result.stats.largestCasterExtent.z << ")\n"
               << "Shadow: " << result.stats.shadowedSamples << '/'
               << static_cast<std::uint64_t>(result.stats.mapWidth) * result.stats.mapHeight * 16U
               << " pixels from " << result.stats.rays << " rays ("
               << result.stats.shadowSampleGrid << 'x' << result.stats.shadowSampleGrid
               << ", " << result.stats.partialCoveragePixels << " partial-coverage pixels, "
+              << result.stats.preventedFilterJoinPixels
+              << " filter-join pixels prevented, "
               << result.stats.removedSmallIslandPixels << " small-island pixels removed) in "
               << std::fixed << std::setprecision(3) << total << " s"
               << " (load " << result.stats.loadSeconds << ", BVH " << result.stats.bvhSeconds

@@ -39,7 +39,7 @@ bool intersectsBounds(
     return true;
 }
 
-bool intersectsTriangle(
+bool intersectsOpaqueTriangle(
     const Triangle& triangle, const Vec3 origin, const Vec3 direction,
     const float minimumDistance, const float maximumDistance)
 {
@@ -57,7 +57,15 @@ bool intersectsTriangle(
     const auto v = dot(direction, q) * inverse;
     if (v < 0.0F || u + v > 1.0F) return false;
     const auto distance = dot(edge2, q) * inverse;
-    return distance >= minimumDistance && distance <= maximumDistance;
+    if (distance < minimumDistance || distance > maximumDistance) return false;
+    if (triangle.alphaMask) {
+        const auto w = 1.0F - u - v;
+        const auto textureU = triangle.uvA.x * w + triangle.uvB.x * u + triangle.uvC.x * v;
+        const auto textureV = triangle.uvA.y * w + triangle.uvB.y * u + triangle.uvC.y * v;
+        // Warcraft's Transparent filter is an alpha test near 0.75.
+        if (triangle.alphaMask->sample(textureU, textureV) < 192U) return false;
+    }
+    return true;
 }
 
 } // namespace
@@ -124,7 +132,7 @@ bool Bvh::intersects(
         if (!intersectsBounds(node.bounds, origin, direction, minimumDistance, maximumDistance)) continue;
         if (node.count != 0U) {
             for (std::uint32_t offset = 0; offset < node.count; ++offset) {
-                if (intersectsTriangle(triangles_[indices_[node.first + offset]], origin, direction,
+                if (intersectsOpaqueTriangle(triangles_[indices_[node.first + offset]], origin, direction,
                                        minimumDistance, maximumDistance)) return true;
             }
         } else {

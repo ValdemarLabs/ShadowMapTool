@@ -2,9 +2,17 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <limits>
+#include <memory>
+#include <vector>
 
 namespace w3shadow {
+
+struct Vec2 {
+    float x = 0.0F;
+    float y = 0.0F;
+};
 
 struct Vec3 {
     float x = 0.0F;
@@ -46,10 +54,25 @@ struct Vec3 {
     return value * (1.0F / length);
 }
 
+struct AlphaMask {
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    std::vector<std::uint8_t> alpha;
+
+    [[nodiscard]] std::uint8_t sample(float u, float v) const noexcept;
+};
+
 struct Triangle {
     Vec3 a;
     Vec3 b;
     Vec3 c;
+    Vec2 uvA;
+    Vec2 uvB;
+    Vec2 uvC;
+    std::uint32_t materialId = std::numeric_limits<std::uint32_t>::max();
+    std::uint32_t shadowTextureIndex = std::numeric_limits<std::uint32_t>::max();
+    bool alphaTested = false;
+    std::shared_ptr<const AlphaMask> alphaMask;
 };
 
 struct Aabb {
@@ -87,6 +110,24 @@ struct Aabb {
     result.expand(triangle.b);
     result.expand(triangle.c);
     return result;
+}
+
+inline std::uint8_t AlphaMask::sample(float u, float v) const noexcept
+{
+    if (width == 0U || height == 0U || alpha.size() !=
+            static_cast<std::size_t>(width) * height || !std::isfinite(u) ||
+            !std::isfinite(v)) {
+        return 0xFFU;
+    }
+    u -= std::floor(u);
+    v -= std::floor(v);
+    if (u < 0.0F) u += 1.0F;
+    if (v < 0.0F) v += 1.0F;
+    const auto x = std::min(static_cast<std::uint32_t>(u * static_cast<float>(width)),
+                            width - 1U);
+    const auto y = std::min(static_cast<std::uint32_t>(v * static_cast<float>(height)),
+                            height - 1U);
+    return alpha[static_cast<std::size_t>(y) * width + x];
 }
 
 } // namespace w3shadow

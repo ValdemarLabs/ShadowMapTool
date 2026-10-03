@@ -1,6 +1,7 @@
 #include "shadow/ShadowGenerator.hpp"
 
 #include "formats/DOO.hpp"
+#include "formats/BLP.hpp"
 #include "formats/MDX.hpp"
 #include "formats/W3R.hpp"
 #include "formats/W3E.hpp"
@@ -10,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -17,7 +19,9 @@
 #include <sstream>
 #include <stdexcept>
 #include <thread>
+#include <limits>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace w3shadow {
@@ -34,6 +38,20 @@ std::optional<std::vector<std::byte>> optionalArchiveFile(
     const MapArchive& archive, const std::string_view path)
 {
     return archive.contains(path) ? std::optional(archive.read(path)) : std::nullopt;
+}
+
+std::string lower(std::string value)
+{
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](const unsigned char character) {
+                       return static_cast<char>(std::tolower(character));
+                   });
+    return value;
+}
+
+bool differsFromOne(const float value)
+{
+    return std::abs(value - 1.0F) > 0.0001F;
 }
 
 } // namespace
@@ -59,6 +77,11 @@ GenerationResult generateShadowMap(
     }
     if (options.minimumShadowIslandPixels > 64U) {
         throw std::invalid_argument("minimum shadow island size must be from 0 to 64");
+    }
+    if (!std::isfinite(options.maximumCasterHorizontalSpan) ||
+        options.maximumCasterHorizontalSpan < 0.0F ||
+        options.maximumCasterHorizontalSpan > 131072.0F) {
+        throw std::invalid_argument("maximum caster span must be from 0 to 131072");
     }
     const auto start = Clock::now();
     const auto parsedTerrain = parseW3E(archive.read("war3map.w3e"));
@@ -117,7 +140,10 @@ GenerationResult generateShadowMap(
         result.warnings.insert(result.warnings.end(), objects.warnings().begin(), objects.warnings().end());
 
         std::unordered_map<std::string, MDXModel> modelCache;
+        std::unordered_map<std::string, std::shared_ptr<const AlphaMask>> alphaTextureCache;
+        std::unordered_set<std::string> alphaTextureWarnings;
         std::unordered_map<std::string, std::uint64_t> unresolvedWarnings;
+        std::unordered_map<std::string, std::uint64_t> oversizedCasterWarnings;
         for (const auto& placement : placements.placements) {
             if (placement.life == 0U) continue;
             const auto validSkin = placement.skinRawcode.size() == 4U &&
@@ -143,12 +169,52 @@ GenerationResult generateShadowMap(
                 }
                 const auto bytes = assets.load(path);
                 if (!bytes) continue;
-                const auto parsed = parseMDX(*bytes);
+                auto parsed = parseMDX(*bytes);
                 if (!parsed) {
                     result.warnings.push_back(path + ": " + parsed.error);
                     continue;
                 }
-                const auto [iterator, inserted] = modelCache.emplace(path, parsed.model);
+                for (const auto& warning : parsed.warnings) {
+                    result.warnings.push_back(path + ": " + warning);
+                }
+                for (auto& triangle : parsed.model.triangles) {
+                    if (!triangle.alphaTested ||
+                        triangle.shadowTextureIndex >= parsed.model.textures.size()) continue;
+                    auto texturePath = normalizeAssetPath(
+                        parsed.model.textures[triangle.shadowTextureIndex].path);
+                    if (texturePath.empty()) continue;
+                    const auto lowered = lower(texturePath);
+                    if (!lowered.ends_with(".blp")) {
+                        const auto dot = texturePath.find_last_of('.');
+                        if (dot != std::string::npos) texturePath.erase(dot);
+                        texturePath += ".blp";
+                    }
+                    const auto cachedTexture = alphaTextureCache.find(texturePath);
+                    if (cachedTexture != alphaTextureCache.end()) {
+                        triangle.alphaMask = cachedTexture->second;
+                        continue;
+                    }
+                    std::shared_ptr<const AlphaMask> mask;
+                    const auto textureBytes = assets.load(texturePath);
+                    if (textureBytes) {
+                        auto decoded = decodeBlpAlpha(*textureBytes);
+                        if (decoded) {
+                            mask = std::move(decoded.mask);
+                            ++result.stats.alphaTexturesLoaded;
+                        } else if (alphaTextureWarnings.insert(texturePath).second) {
+                            result.warnings.push_back(texturePath +
+                                ": alpha-mask decode failed (" + decoded.error +
+                                "); using opaque fallback");
+                        }
+                    } else if (alphaTextureWarnings.insert(texturePath).second) {
+                        result.warnings.push_back(texturePath +
+                            ": alpha-tested material texture was not found; using opaque fallback");
+                    }
+                    if (!mask) ++result.stats.alphaTexturesUnavailable;
+                    alphaTextureCache.emplace(texturePath, mask);
+                    triangle.alphaMask = std::move(mask);
+                }
+                const auto [iterator, inserted] = modelCache.emplace(path, std::move(parsed.model));
                 static_cast<void>(inserted);
                 model = &iterator->second;
                 selectedPath = path;
@@ -160,14 +226,71 @@ GenerationResult generateShadowMap(
                                      " (" + definition->modelPath + ")"];
                 continue;
             }
+            result.stats.materialFilteredTriangles += model->materialFilteredTriangles;
+            result.stats.alphaTestedTriangles += model->alphaTestedTriangles;
             auto transformed = transformTriangles(model->triangles, placement.position,
                                                    placement.rotation, placement.scale,
                                                    placement.roll, placement.pitch);
-            result.sceneTriangles.insert(result.sceneTriangles.end(), transformed.begin(), transformed.end());
+            if (result.stats.resolvedPlacements == 0U) {
+                result.stats.minimumPlacementScale = placement.scale;
+                result.stats.maximumPlacementScale = placement.scale;
+            } else {
+                result.stats.minimumPlacementScale.x = std::min(
+                    result.stats.minimumPlacementScale.x, placement.scale.x);
+                result.stats.minimumPlacementScale.y = std::min(
+                    result.stats.minimumPlacementScale.y, placement.scale.y);
+                result.stats.minimumPlacementScale.z = std::min(
+                    result.stats.minimumPlacementScale.z, placement.scale.z);
+                result.stats.maximumPlacementScale.x = std::max(
+                    result.stats.maximumPlacementScale.x, placement.scale.x);
+                result.stats.maximumPlacementScale.y = std::max(
+                    result.stats.maximumPlacementScale.y, placement.scale.y);
+                result.stats.maximumPlacementScale.z = std::max(
+                    result.stats.maximumPlacementScale.z, placement.scale.z);
+            }
+            bool oversizedCaster = false;
+            if (differsFromOne(placement.scale.x) || differsFromOne(placement.scale.y) ||
+                differsFromOne(placement.scale.z)) {
+                ++result.stats.nonUnitScalePlacements;
+            }
+            if (!transformed.empty()) {
+                Aabb casterBounds;
+                for (const auto& triangle : transformed) casterBounds.expand(bounds(triangle));
+                const auto casterExtent = casterBounds.extent();
+                const auto casterDiagonalSquared = dot(casterExtent, casterExtent);
+                if (casterDiagonalSquared > dot(result.stats.largestCasterExtent,
+                                                 result.stats.largestCasterExtent)) {
+                    result.stats.largestCasterExtent = casterExtent;
+                    result.stats.largestCasterScale = placement.scale;
+                    result.stats.largestCasterRawcode = placement.rawcode;
+                    result.stats.largestCasterModelPath = selectedPath;
+                }
+                const auto horizontalSpan = std::max(casterExtent.x, casterExtent.y);
+                if (options.maximumCasterHorizontalSpan > 0.0F &&
+                    horizontalSpan > options.maximumCasterHorizontalSpan) {
+                    oversizedCaster = true;
+                    ++result.stats.oversizedCasterPlacements;
+                    std::ostringstream warning;
+                    warning << "oversized caster " << placement.rawcode << " [" << selectedPath
+                            << "] scale (" << placement.scale.x << ',' << placement.scale.y << ','
+                            << placement.scale.z << ") horizontal span " << horizontalSpan
+                            << " exceeds " << options.maximumCasterHorizontalSpan
+                            << "; excluded (set maximum caster span to 0 to allow it)";
+                    ++oversizedCasterWarnings[warning.str()];
+                }
+            }
+            if (!oversizedCaster) {
+                result.sceneTriangles.insert(result.sceneTriangles.end(), transformed.begin(),
+                                             transformed.end());
+            }
             ++result.stats.resolvedPlacements;
         }
         for (const auto& [warning, count] : unresolvedWarnings) {
             result.warnings.push_back(warning + " (" + std::to_string(count) + " placements)");
+        }
+        for (const auto& [warning, count] : oversizedCasterWarnings) {
+            result.warnings.push_back(warning + " (" + std::to_string(count) +
+                                      (count == 1U ? " placement)" : " placements)"));
         }
         result.stats.uniqueModels = modelCache.size();
         if (result.stats.resolvedPlacements == 0U && result.stats.unresolvedPlacements > 0U) {
@@ -282,6 +405,48 @@ GenerationResult generateShadowMap(
                 static_cast<float>(order - index + 1U) / static_cast<float>(index);
         }
     }
+
+    // Label disconnected raw shadow islands before filtering. The Gaussian
+    // stage uses the strongest component at each output cell instead of adding
+    // coverage from separate nearby casters, preventing blur-only bridges.
+    std::vector<std::uint32_t> coverageComponents(pixelCount, 0U);
+    if (options.coverageMode == ShadowCoverageMode::CoherentFilter &&
+        options.gaussianRadius > 0U) {
+        std::vector<std::size_t> pending;
+        pending.reserve(128U);
+        std::uint32_t nextComponent = 1U;
+        for (std::size_t startIndex = 0; startIndex < pixelCount; ++startIndex) {
+            if (coverageComponents[startIndex] != 0U || coverageSamples[startIndex] == 0U ||
+                receiverAllowed[startIndex] == 0U) continue;
+            coverageComponents[startIndex] = nextComponent;
+            pending.clear();
+            pending.push_back(startIndex);
+            while (!pending.empty()) {
+                const auto index = pending.back();
+                pending.pop_back();
+                const auto x = static_cast<int>(index % shadowWidth);
+                const auto y = static_cast<int>(index / shadowWidth);
+                for (int offsetY = -1; offsetY <= 1; ++offsetY) {
+                    for (int offsetX = -1; offsetX <= 1; ++offsetX) {
+                        if (offsetX == 0 && offsetY == 0) continue;
+                        const auto neighborX = x + offsetX;
+                        const auto neighborY = y + offsetY;
+                        if (neighborX < 0 || neighborY < 0 ||
+                            neighborX >= static_cast<int>(shadowWidth) ||
+                            neighborY >= static_cast<int>(shadowHeight)) continue;
+                        const auto neighborIndex = static_cast<std::size_t>(neighborY) *
+                            shadowWidth + static_cast<std::size_t>(neighborX);
+                        if (coverageComponents[neighborIndex] != 0U ||
+                            coverageSamples[neighborIndex] == 0U ||
+                            receiverAllowed[neighborIndex] == 0U) continue;
+                        coverageComponents[neighborIndex] = nextComponent;
+                        pending.push_back(neighborIndex);
+                    }
+                }
+            }
+            if (nextComponent != std::numeric_limits<std::uint32_t>::max()) ++nextComponent;
+        }
+    }
     for (std::uint32_t y = 0; y < shadowHeight; ++y) {
         for (std::uint32_t x = 0; x < shadowWidth; ++x) {
             const auto index = static_cast<std::size_t>(y) * shadowWidth + x;
@@ -292,6 +457,9 @@ GenerationResult generateShadowMap(
                     // produces connected, rounded binary contours without dither.
                     float weightedCoverage = 0.0F;
                     float totalWeight = 0.0F;
+                    std::array<std::uint32_t, 49> localComponents{};
+                    std::array<float, 49> componentCoverage{};
+                    std::size_t localComponentCount = 0U;
                     const auto radius = static_cast<int>(options.gaussianRadius);
                     for (int offsetY = -radius; offsetY <= radius; ++offsetY) {
                         const auto sampleY = static_cast<int>(y) + offsetY;
@@ -302,14 +470,39 @@ GenerationResult generateShadowMap(
                             const auto weight =
                                 gaussianKernel[static_cast<std::size_t>(offsetX + radius)] *
                                 gaussianKernel[static_cast<std::size_t>(offsetY + radius)];
-                            weightedCoverage += rawCoverage(
+                            const auto sampleCoverage = rawCoverage(
                                 static_cast<std::uint32_t>(sampleX),
-                                static_cast<std::uint32_t>(sampleY)) * weight;
+                                static_cast<std::uint32_t>(sampleY));
+                            const auto contribution = sampleCoverage * weight;
+                            weightedCoverage += contribution;
                             totalWeight += weight;
+                            if (contribution <= 0.0F || coverageComponents.empty()) continue;
+                            const auto sampleIndex = static_cast<std::size_t>(sampleY) *
+                                shadowWidth + static_cast<std::size_t>(sampleX);
+                            const auto component = coverageComponents[sampleIndex];
+                            if (component == 0U) continue;
+                            std::size_t local = 0U;
+                            while (local < localComponentCount &&
+                                   localComponents[local] != component) ++local;
+                            if (local == localComponentCount) {
+                                localComponents[local] = component;
+                                ++localComponentCount;
+                            }
+                            componentCoverage[local] += contribution;
                         }
                     }
-                    occluded = totalWeight > 0.0F &&
-                               weightedCoverage / totalWeight >= options.coverageThreshold;
+                    auto strongestCoverage = weightedCoverage;
+                    if (options.gaussianRadius > 0U && localComponentCount > 0U) {
+                        strongestCoverage = *std::max_element(
+                            componentCoverage.begin(),
+                            componentCoverage.begin() + static_cast<std::ptrdiff_t>(localComponentCount));
+                    }
+                    occluded = totalWeight > 0.0F && strongestCoverage / totalWeight >=
+                               options.coverageThreshold;
+                    if (!occluded && totalWeight > 0.0F &&
+                        weightedCoverage / totalWeight >= options.coverageThreshold) {
+                        ++result.stats.preventedFilterJoinPixels;
+                    }
                 } else {
                     occluded = coverageSamples[index] >= samplesPerPixel / 2U + 1U;
                 }

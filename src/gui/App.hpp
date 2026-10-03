@@ -77,6 +77,7 @@ private:
         AdvancedCoverageThreshold,
         AdvancedRayBias,
         AdvancedMinimumIsland,
+        AdvancedMaximumCasterSpan,
         AdvancedThreads,
         AdvancedReset,
         AdvancedClose,
@@ -116,7 +117,7 @@ private:
         D2D1_RECT_F helpClose{};
         D2D1_RECT_F status{};
         std::array<D2D1_RECT_F, 3> advancedToggles{};
-        std::array<D2D1_RECT_F, 5> advancedSliders{};
+        std::array<D2D1_RECT_F, 6> advancedSliders{};
         D2D1_RECT_F advancedReset{};
         D2D1_RECT_F advancedClose{};
     };
@@ -240,6 +241,7 @@ private:
     float coverageThreshold_ = 0.45F;
     float rayOriginOffset_ = 2.0F;
     std::uint32_t minimumShadowIslandPixels_ = 4;
+    float maximumCasterHorizontalSpan_ = 16384.0F;
     std::uint32_t workerThreads_ = 0;
     bool ignoreTransparentTerrain_ = true;
     bool cliffWalls_ = false;

@@ -10,9 +10,18 @@
 
 namespace w3shadow {
 
+struct MDXTexture {
+    std::string path;
+    std::uint32_t replaceableId = 0;
+};
+
 struct MDXModel {
     std::uint32_t version = 800;
     std::vector<Triangle> triangles;
+    std::vector<MDXTexture> textures;
+    std::size_t sourceTriangles = 0;
+    std::size_t materialFilteredTriangles = 0;
+    std::size_t alphaTestedTriangles = 0;
 };
 
 struct MDXParseResult {

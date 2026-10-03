@@ -56,6 +56,7 @@ add_library(w3shadow_core
     src/archive/MapArchive.cpp
     src/assets/AssetProvider.cpp
     src/formats/DOO.cpp
+    src/formats/BLP.cpp
     src/formats/MDX.cpp
     src/geometry/BVH.cpp
     src/objects/ObjectDatabase.cpp
@@ -73,6 +74,7 @@ target_include_directories(w3shadow_core PUBLIC src)
 target_link_libraries(w3shadow_core PRIVATE StormLib::storm)
 if(WIN32)
     target_compile_definitions(w3shadow_core PRIVATE UNICODE _UNICODE)
+    target_link_libraries(w3shadow_core PRIVATE ole32 windowscodecs)
 endif()
 set_target_properties(w3shadow_core PROPERTIES
     CXX_STANDARD ${W3SHADOW_CXX_STANDARD}

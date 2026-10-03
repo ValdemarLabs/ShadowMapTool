@@ -1,5 +1,6 @@
 #include "archive/MapArchive.hpp"
 #include "assets/AssetProvider.hpp"
+#include "formats/BLP.hpp"
 #include "formats/DOO.hpp"
 #include "formats/MDX.hpp"
 #include "formats/Png.hpp"
@@ -216,6 +217,42 @@ void testTransparentTerrain()
             "fully transparent BLP terrain was not excluded as a shadow receiver");
 }
 
+void testBlpAlphaAndAlphaTestedBvh()
+{
+    std::vector<std::byte> blp(156U, std::byte{0});
+    blp[0] = static_cast<std::byte>('B'); blp[1] = static_cast<std::byte>('L');
+    blp[2] = static_cast<std::byte>('P'); blp[3] = static_cast<std::byte>('2');
+    blp[8] = std::byte{3}; // raw BGRA
+    blp[9] = std::byte{8};
+    writeU32(blp, 12U, 2U);
+    writeU32(blp, 16U, 1U);
+    writeU32(blp, 20U, 148U);
+    blp[151] = std::byte{0};
+    blp[155] = std::byte{0xFF};
+    const auto decoded = w3shadow::decodeBlpAlpha(blp);
+    require(static_cast<bool>(decoded), decoded.error);
+    require(decoded.mask->sample(0.25F, 0.0F) == 0U &&
+            decoded.mask->sample(0.75F, 0.0F) == 0xFFU,
+            "BLP2 raw alpha mask was decoded incorrectly");
+
+    w3shadow::Triangle alphaTriangle{{-1.0F, -1.0F, 5.0F},
+                                     {1.0F, -1.0F, 5.0F},
+                                     {0.0F, 1.0F, 5.0F}};
+    alphaTriangle.uvA = {0.25F, 0.0F};
+    alphaTriangle.uvB = alphaTriangle.uvA;
+    alphaTriangle.uvC = alphaTriangle.uvA;
+    alphaTriangle.alphaMask = decoded.mask;
+    require(!w3shadow::Bvh(std::array{alphaTriangle}).intersects(
+                {0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 1.0F}),
+            "transparent texture texel incorrectly blocked a shadow ray");
+    alphaTriangle.uvA = {0.75F, 0.0F};
+    alphaTriangle.uvB = alphaTriangle.uvA;
+    alphaTriangle.uvC = alphaTriangle.uvA;
+    require(w3shadow::Bvh(std::array{alphaTriangle}).intersects(
+                {0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 1.0F}),
+            "opaque texture texel did not block a shadow ray");
+}
+
 void testGeometryAndFormats()
 {
     const std::array<w3shadow::Triangle, 1> triangles{
@@ -327,6 +364,53 @@ void testGeometryAndFormats()
     const auto parsedMdx = w3shadow::parseMDX(mdx);
     require(static_cast<bool>(parsedMdx), parsedMdx.error);
     require(parsedMdx.model.triangles.size() == 1U, "MDX geoset triangle was not decoded");
+
+    const auto scaled = w3shadow::transformTriangles(
+        parsedMdx.model.triangles, {10.0F, 20.0F, 30.0F}, 0.0F,
+        {2.0F, 3.0F, 4.0F});
+    require(scaled.size() == 1U && scaled[0].a.x == 10.0F &&
+            scaled[0].a.y == 20.0F && scaled[0].a.z == 30.0F &&
+            scaled[0].b.x == 12.0F && scaled[0].b.y == 20.0F &&
+            scaled[0].c.x == 10.0F && scaled[0].c.y == 23.0F,
+            "placed doodad X/Y/Z scale was not applied before translation");
+
+    auto filteredGeoset = geoset;
+    appendTag(filteredGeoset, "GNDX"); appendU32(filteredGeoset, 0U);
+    appendTag(filteredGeoset, "MTGC"); appendU32(filteredGeoset, 0U);
+    appendTag(filteredGeoset, "MATS"); appendU32(filteredGeoset, 0U);
+    appendU32(filteredGeoset, 0U);
+
+    std::vector<std::byte> material;
+    appendU32(material, 48U);
+    appendU32(material, 0U); // priority plane
+    appendU32(material, 0U); // flags
+    appendTag(material, "LAYS"); appendU32(material, 1U);
+    appendU32(material, 28U);
+    appendU32(material, 3U); // additive filter mode
+    appendU32(material, 0U); // shading flags
+    appendU32(material, 0U); // texture ID
+    appendU32(material, 0xFFFFFFFFU); // texture animation ID
+    appendU32(material, 0U); // coordinate set
+    appendF32(material, 1.0F); // alpha
+
+    std::vector<std::byte> filteredMdx;
+    appendTag(filteredMdx, "MDLX");
+    appendTag(filteredMdx, "VERS"); appendU32(filteredMdx, 4U);
+    appendU32(filteredMdx, 800U);
+    appendTag(filteredMdx, "MTLS");
+    appendU32(filteredMdx, static_cast<std::uint32_t>(material.size()));
+    filteredMdx.insert(filteredMdx.end(), material.begin(), material.end());
+    appendTag(filteredMdx, "GEOS");
+    appendU32(filteredMdx, static_cast<std::uint32_t>(filteredGeoset.size() + 4U));
+    appendU32(filteredMdx, static_cast<std::uint32_t>(filteredGeoset.size() + 4U));
+    filteredMdx.insert(filteredMdx.end(), filteredGeoset.begin(), filteredGeoset.end());
+
+    const auto parsedFilteredMdx = w3shadow::parseMDX(filteredMdx);
+    require(static_cast<bool>(parsedFilteredMdx), parsedFilteredMdx.error);
+    require(parsedFilteredMdx.model.sourceTriangles == 1U &&
+            parsedFilteredMdx.model.materialFilteredTriangles == 1U &&
+            parsedFilteredMdx.model.triangles.empty(),
+            "additive MDX material geometry was not excluded from static shadows");
 }
 
 void testObjectShadowOverride()
@@ -692,6 +776,10 @@ void testWorldEditorReferencePair()
     invalidTuning.minimumShadowIslandPixels = 65U;
     require(rejects(invalidTuning), "invalid minimum island size was accepted");
 
+    invalidTuning = fastOptions;
+    invalidTuning.maximumCasterHorizontalSpan = -1.0F;
+    require(rejects(invalidTuning), "invalid maximum caster span was accepted");
+
     auto unfilteredOptions = ultraOptions;
     unfilteredOptions.gaussianRadius = 0U;
     unfilteredOptions.minimumShadowIslandPixels = 0U;
@@ -711,6 +799,7 @@ int main()
         testPatterns();
         testW3E();
         testTransparentTerrain();
+        testBlpAlphaAndAlphaTestedBvh();
         testGeometryAndFormats();
         testObjectShadowOverride();
         testInstalledWarcraftAssets();

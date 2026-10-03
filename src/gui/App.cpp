@@ -946,7 +946,7 @@ App::Layout App::calculateLayout() const
         aboutLeft + aboutWidth - 120.0F, aboutTop + aboutHeight - 58.0F,
         aboutLeft + aboutWidth - 24.0F, aboutTop + aboutHeight - 20.0F);
     const float advancedWidth = std::min(760.0F, size.width - 60.0F);
-    const float advancedHeight = std::min(630.0F, size.height - 30.0F);
+    const float advancedHeight = std::min(700.0F, size.height - 30.0F);
     const float advancedLeft = (size.width - advancedWidth) / 2.0F;
     const float advancedTop = (size.height - advancedHeight) / 2.0F;
     const float toggleWidth = (advancedWidth - 68.0F) / 3.0F;
@@ -1100,6 +1100,9 @@ void App::updateSlider(const Target target, const float x)
         minimumShadowIslandPixels_ =
             static_cast<std::uint32_t>(std::lround(normalized * 16.0F));
         break;
+    case Target::AdvancedMaximumCasterSpan:
+        maximumCasterHorizontalSpan_ = std::lround(normalized * 32.0F) * 1024.0F;
+        break;
     case Target::AdvancedThreads:
         workerThreads_ = static_cast<std::uint32_t>(std::lround(normalized * 32.0F));
         break;
@@ -1131,6 +1134,11 @@ void App::stepSlider(const Target target, const int direction)
         minimumShadowIslandPixels_ = static_cast<std::uint32_t>(std::clamp(
             static_cast<int>(minimumShadowIslandPixels_) + direction, 0, 16));
         break;
+    case Target::AdvancedMaximumCasterSpan:
+        maximumCasterHorizontalSpan_ = std::clamp(
+            maximumCasterHorizontalSpan_ + static_cast<float>(direction) * 1024.0F,
+            0.0F, 32768.0F);
+        break;
     case Target::AdvancedThreads:
         workerThreads_ = static_cast<std::uint32_t>(std::clamp(
             static_cast<int>(workerThreads_) + direction, 0, 32));
@@ -1147,11 +1155,12 @@ void App::stepSlider(const Target target, const int direction)
 void App::moveFocus(const bool backwards)
 {
     if (showAdvanced_) {
-        constexpr std::array<Target, 10> targets{
+        constexpr std::array<Target, 11> targets{
             Target::AdvancedCoherentFilter, Target::AdvancedAlphaTerrain,
             Target::AdvancedCliffWalls, Target::AdvancedGaussianRadius,
             Target::AdvancedCoverageThreshold, Target::AdvancedRayBias,
-            Target::AdvancedMinimumIsland, Target::AdvancedThreads,
+            Target::AdvancedMinimumIsland, Target::AdvancedMaximumCasterSpan,
+            Target::AdvancedThreads,
             Target::AdvancedReset, Target::AdvancedClose};
         auto iterator = std::find(targets.begin(), targets.end(), focused_);
         std::size_t index = iterator == targets.end()
@@ -1359,6 +1368,7 @@ void App::activate(const Target target)
     case Target::AdvancedRayBias:
     case Target::AdvancedMinimumIsland:
     case Target::AdvancedThreads:
+    case Target::AdvancedMaximumCasterSpan:
         break;
     case Target::AdvancedReset:
         coverageMode_ = ShadowCoverageMode::CoherentFilter;
@@ -1367,6 +1377,7 @@ void App::activate(const Target target)
         rayOriginOffset_ = 2.0F;
         minimumShadowIslandPixels_ = 4U;
         workerThreads_ = 0U;
+        maximumCasterHorizontalSpan_ = 16384.0F;
         ignoreTransparentTerrain_ = true;
         cliffWalls_ = false;
         calculationDirty_ = previewKind_ == PreviewKind::Calculated;
@@ -1737,6 +1748,7 @@ void App::calculateShadows()
         options.coverageThreshold = coverageThreshold_;
         options.minimumShadowIslandPixels = minimumShadowIslandPixels_;
         options.terrainGeometry = terrainGeometry_;
+        options.maximumCasterHorizontalSpan = maximumCasterHorizontalSpan_;
         options.coverageMode = coverageMode_;
         options.terrain = includeTerrain_;
         options.cliffWalls = cliffWalls_;
@@ -1766,6 +1778,7 @@ void App::calculateShadows()
                        << L", ray-bias=" << rayOriginOffset_
                        << L", min-island=" << minimumShadowIslandPixels_
                        << L", alpha-mask=" << (ignoreTransparentTerrain_ ? L"on" : L"off")
+                       << L", max-caster-span=" << maximumCasterHorizontalSpan_
                        << L", cliff-walls=" << (cliffWalls_ ? L"on" : L"off")
                        << L", threads=" << (workerThreads_ == 0U ? L"auto" : std::to_wstring(workerThreads_))
                        << L", placements=" << generated.stats.placements
@@ -1774,8 +1787,34 @@ void App::calculateShadows()
                        << L", models=" << generated.stats.uniqueModels
                        << L", triangles=" << generated.stats.triangles
                        << L", cliff-wall-triangles=" << generated.stats.cliffWallTriangles
+                       << L", material-filtered-triangles="
+                       << generated.stats.materialFilteredTriangles
+                       << L", alpha-tested-triangles=" << generated.stats.alphaTestedTriangles
+                       << L", alpha-textures=" << generated.stats.alphaTexturesLoaded
+                       << L", alpha-texture-fallbacks="
+                       << generated.stats.alphaTexturesUnavailable
+                       << L", oversized-casters-excluded="
+                       << generated.stats.oversizedCasterPlacements
+                       << L", non-unit-scale-placements="
+                       << generated.stats.nonUnitScalePlacements
+                       << L", scale-min=(" << generated.stats.minimumPlacementScale.x << L","
+                       << generated.stats.minimumPlacementScale.y << L","
+                       << generated.stats.minimumPlacementScale.z << L")"
+                       << L", scale-max=(" << generated.stats.maximumPlacementScale.x << L","
+                       << generated.stats.maximumPlacementScale.y << L","
+                       << generated.stats.maximumPlacementScale.z << L")"
+                       << L", largest-caster=" << widen(generated.stats.largestCasterRawcode)
+                       << L" model=" << widen(generated.stats.largestCasterModelPath)
+                       << L" scale=(" << generated.stats.largestCasterScale.x << L","
+                       << generated.stats.largestCasterScale.y << L","
+                       << generated.stats.largestCasterScale.z << L") extent=("
+                       << generated.stats.largestCasterExtent.x << L","
+                       << generated.stats.largestCasterExtent.y << L","
+                       << generated.stats.largestCasterExtent.z << L")"
                        << L", transparent-terrain-types=" << generated.stats.transparentTerrainTypes
                        << L", partial-coverage-pixels=" << generated.stats.partialCoveragePixels
+                       << L", prevented-filter-join-pixels="
+                       << generated.stats.preventedFilterJoinPixels
                        << L", removed-small-island-pixels="
                        << generated.stats.removedSmallIslandPixels
                        << L", rays=" << generated.stats.rays
@@ -2196,7 +2235,7 @@ void App::paint()
         backgroundBrush_->SetOpacity(1.0F);
 
         const float advancedWidth = std::min(760.0F, size.width - 60.0F);
-        const float advancedHeight = std::min(630.0F, size.height - 30.0F);
+        const float advancedHeight = std::min(700.0F, size.height - 30.0F);
         const float advancedLeft = (size.width - advancedWidth) / 2.0F;
         const float advancedTop = (size.height - advancedHeight) / 2.0F;
         const auto advancedCard = D2D1::RectF(
@@ -2235,6 +2274,9 @@ void App::paint()
             : std::to_wstring(minimumShadowIslandPixels_) + L" cells";
         const auto threadsValue = workerThreads_ == 0U
             ? std::wstring(L"Auto") : std::to_wstring(workerThreads_);
+        const auto casterSpanValue = maximumCasterHorizontalSpan_ == 0.0F
+            ? std::wstring(L"Unlimited")
+            : std::to_wstring(static_cast<int>(maximumCasterHorizontalSpan_)) + L" units";
         drawSlider(layout.advancedSliders[0], L"Gaussian radius — wider softens and joins edges",
                    radiusValue, Target::AdvancedGaussianRadius,
                    static_cast<float>(gaussianRadius_) / 3.0F);
@@ -2246,11 +2288,16 @@ void App::paint()
         drawSlider(layout.advancedSliders[3], L"Minimum shadow island — removes isolated dots",
                    islandValue, Target::AdvancedMinimumIsland,
                    static_cast<float>(minimumShadowIslandPixels_) / 16.0F);
-        drawSlider(layout.advancedSliders[4], L"Worker threads — performance only",
+        drawSlider(layout.advancedSliders[4],
+                   L"Maximum caster span — excludes giant domes/backdrops",
+                   casterSpanValue, Target::AdvancedMaximumCasterSpan,
+                   maximumCasterHorizontalSpan_ / 32768.0F);
+        drawSlider(layout.advancedSliders[5], L"Worker threads — performance only",
                    threadsValue, Target::AdvancedThreads,
                    static_cast<float>(workerThreads_) / 32.0F);
         drawText(
-            L"Recommended: coherent filter on, radius 1, cutoff 45%, bias 2.0, island 4. "
+            L"Recommended: coherent filter on, radius 1, cutoff 45%, bias 2.0, island 4, "
+            L"caster span 16384. "
             L"Cliff walls are experimental and may over-darken decorative cliffs.",
             D2D1::RectF(advancedLeft + 34.0F, advancedTop + advancedHeight - 103.0F,
                         advancedCard.right - 34.0F, advancedTop + advancedHeight - 65.0F),
@@ -2366,7 +2413,9 @@ void App::paint()
                 L"fixed binary four-cells-per-tile shadowmap rather than a higher-resolution texture. "
                 L"Transparent terrain receivers are automatically excluded. Smooth terrain uses "
                 L"matched caster/receiver surfaces plus slope-aware bias to avoid self-shadow acne. "
-                L"Exact decorative cliff models and alpha-tested model materials remain compatibility work.",
+                L"Non-shadow MDX materials are filtered and Transparent layers use BLP texture alpha. "
+                L"Animated model visibility, texture animation, exact decorative cliffs, and World "
+                L"Editor's undocumented post-processing remain limitations.",
                 layout.aboutContents[0], helpBodyFormat_.Get(), textBrush_.Get());
         } else if (aboutSection_ == 1) {
             drawText(
@@ -2426,8 +2475,9 @@ void App::paint()
         drawText(
             L"Choose shadow sources and terrain mode. Ultra 4x is the default edge quality; "
             L"Smooth 2x and Fast 1x trade quality for speed. Open Tuning for Gaussian radius, "
-            L"coverage cutoff, terrain ray bias, alpha terrain, cleanup, and threads. Set the "
-            L"light vector, calculate, inspect the rendered preview, then Save to map.",
+            L"coverage cutoff, terrain ray bias, alpha terrain, cleanup, maximum caster span, "
+            L"and threads. The span limit excludes giant domes/backdrops; set Unlimited only "
+            L"when such a model should cast. Calculate, inspect the preview, then Save to map.",
             D2D1::RectF(helpLeft + 28.0F, helpTop + 126.0F,
                         helpCard.right - 28.0F, helpTop + 192.0F),
             helpBodyFormat_.Get(), textBrush_.Get());
