@@ -1,5 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
 
+# CascLib 3.0 still declares a pre-3.5 policy baseline, which CMake 4 no
+# longer accepts unless the embedding project supplies a compatibility floor.
+if(CMAKE_VERSION VERSION_GREATER_EQUAL 4.0)
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+endif()
+
 project(ShadowMapTool VERSION 1.3.2 LANGUAGES C CXX)
 
 include(FetchContent)

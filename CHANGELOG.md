@@ -21,6 +21,7 @@ ShadowMapTool 1.3.2 improves model-shadow accuracy, adds reusable tuning presets
 
 - Preserved regular custom-object model overrides when `war3mapSkin.w3d` overlays the same doodad rawcode, preventing stock base models from being used for imported-model doodads.
 - Honored integer **Has a Shadow (SD)** overrides from modern doodad and destructible object data in addition to legacy string shadow fields.
+- Restored clean release and CI configuration with CMake 4 while retaining the pinned CascLib 3.0 dependency.
 - Prevented disconnected raw shadow components from merging solely because their Gaussian-filter neighborhoods overlap.
 - Preserved each placed doodad/destructible's independent X/Y/Z scale through transformed caster geometry and added regression coverage for it.
 
