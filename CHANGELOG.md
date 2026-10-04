@@ -2,7 +2,9 @@
 
 This changelog records notable ShadowMapTool releases and development changes.
 
-## 3.10.2026
+## [1.3.2] - 3.10.2026
+
+ShadowMapTool 1.3.2 improves model-shadow accuracy, adds reusable tuning presets and softer sun-shaped contours, and makes difficult map assets easier to identify and control.
 
 ### Added
 
@@ -162,4 +164,6 @@ ShadowMapTool 1.3.0 is the first standalone public release.
 - Approximate cliff-layer walls are optional; exact decorative cliff models and World Editor shadow post-processing are not reproduced.
 - World Editor and ShadowMapTool results can therefore differ even when SHD orientation and byte polarity are correct.
 
+[1.3.2]: https://github.com/ValdemarLabs/ShadowMapTool/tree/v1.3.2
+[1.3.1]: https://github.com/ValdemarLabs/ShadowMapTool/tree/v1.3.1
 [1.3.0]: https://github.com/ValdemarLabs/ShadowMapTool/tree/v1.3.0
