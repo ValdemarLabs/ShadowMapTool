@@ -280,9 +280,40 @@ void testGeometryAndFormats()
     const auto parsedDoo7 = w3shadow::parseDOO(doo7);
     require(static_cast<bool>(parsedDoo7), parsedDoo7.error);
     require(parsedDoo7.version == 7U && parsedDoo7.placements.size() == 2U &&
+            parsedDoo7.layout == w3shadow::DOOLayout::Classic &&
             parsedDoo7.placements[0].editorId == 11U &&
             parsedDoo7.placements[1].editorId == 12U,
             "DOO v7 compact placement records were not decoded");
+
+    std::vector<std::byte> classicDoo8;
+    appendTag(classicDoo8, "W3do"); appendU32(classicDoo8, 8U);
+    appendU32(classicDoo8, 11U); appendU32(classicDoo8, 1U);
+    appendTag(classicDoo8, "LTlt"); appendU32(classicDoo8, 1U);
+    appendF32(classicDoo8, 64.0F); appendF32(classicDoo8, -32.0F);
+    appendF32(classicDoo8, 8.0F); appendF32(classicDoo8, 0.25F);
+    appendF32(classicDoo8, 1.0F); appendF32(classicDoo8, 1.0F);
+    appendF32(classicDoo8, 1.0F);
+    classicDoo8.push_back(std::byte{2}); classicDoo8.push_back(std::byte{100});
+    appendU32(classicDoo8, 0xFFFFFFFFU); appendU32(classicDoo8, 0U);
+    appendU32(classicDoo8, 66U);
+    appendU32(classicDoo8, 0U); appendU32(classicDoo8, 1U);
+    appendTag(classicDoo8, "CLfa"); appendU32(classicDoo8, 0U);
+    appendU32(classicDoo8, 4U); appendU32(classicDoo8, 5U);
+    const auto parsedClassicDoo8 = w3shadow::parseDOO(classicDoo8);
+    require(static_cast<bool>(parsedClassicDoo8), parsedClassicDoo8.error);
+    require(parsedClassicDoo8.layout == w3shadow::DOOLayout::Classic &&
+            parsedClassicDoo8.placements.size() == 1U &&
+            parsedClassicDoo8.placements[0].skinRawcode == "LTlt" &&
+            parsedClassicDoo8.placements[0].editorId == 66U,
+            "classic DOO v8 layout was not auto-detected");
+    const auto forcedClassicDoo8 = w3shadow::parseDOO(
+        classicDoo8, w3shadow::DOOLayoutMode::Classic);
+    require(static_cast<bool>(forcedClassicDoo8) &&
+            forcedClassicDoo8.layout == w3shadow::DOOLayout::Classic &&
+            forcedClassicDoo8.layoutReason.find("forced") != std::string::npos,
+            "classic DOO v8 override was not honored");
+    require(!w3shadow::parseDOO(classicDoo8, w3shadow::DOOLayoutMode::Modern),
+            "modern DOO override incorrectly accepted a classic v8 record");
 
     std::vector<std::byte> doo;
     appendTag(doo, "W3do"); appendU32(doo, 8U); appendU32(doo, 11U); appendU32(doo, 1U);
@@ -297,9 +328,12 @@ void testGeometryAndFormats()
     appendTag(doo, "CLfb"); appendU32(doo, 1U); appendU32(doo, 56U); appendU32(doo, 78U);
     const auto parsedDoo = w3shadow::parseDOO(doo);
     require(static_cast<bool>(parsedDoo), parsedDoo.error);
-    require(parsedDoo.placements.size() == 1U && parsedDoo.placements[0].rawcode == "LTlt",
+    require(parsedDoo.layout == w3shadow::DOOLayout::Modern &&
+            parsedDoo.placements.size() == 1U && parsedDoo.placements[0].rawcode == "LTlt",
             "DOO placement was not decoded");
     require(parsedDoo.placements[0].skinRawcode == "LTlt", "DOO v8 skin rawcode was not decoded");
+    require(!w3shadow::parseDOO(doo, w3shadow::DOOLayoutMode::Classic),
+            "classic DOO override incorrectly accepted a modern v8 record");
     require(parsedDoo.specialVersion == 0U && parsedDoo.specialPlacements.size() == 2U,
             "DOO special-doodad section was not decoded");
     require(parsedDoo.specialPlacements[0].rawcode == "CLfa" &&
@@ -324,6 +358,8 @@ void testGeometryAndFormats()
     require(static_cast<bool>(parsedDoo13), parsedDoo13.error);
     require(parsedDoo13.version == 13U && parsedDoo13.placements.size() == 1U,
             "DOO v13 placement was not decoded");
+    require(parsedDoo13.layout == w3shadow::DOOLayout::Modern,
+            "DOO v13 did not select the required modern layout");
     require(parsedDoo13.placements[0].groupId == 7 && parsedDoo13.placements[0].lightCount == 1U &&
             parsedDoo13.placements[0].editorId == 123U,
             "DOO v13 extension fields are misaligned");

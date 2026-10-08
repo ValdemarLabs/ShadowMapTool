@@ -1109,10 +1109,22 @@ App::Layout App::calculateLayout() const
             layout.advancedToggles[index].right - 7.0F,
             layout.advancedToggles[index].bottom - 8.0F);
     }
+    const float dooLayoutWidth = (advancedWidth - 92.0F) / 3.0F;
+    for (std::size_t index = 0; index < layout.advancedDooLayouts.size(); ++index) {
+        layout.advancedDooLayouts[index] = D2D1::RectF(
+            advancedLeft + 34.0F + static_cast<float>(index) * (dooLayoutWidth + 8.0F),
+            advancedTop + 172.0F,
+            advancedLeft + 34.0F + static_cast<float>(index) * (dooLayoutWidth + 8.0F) +
+                dooLayoutWidth,
+            advancedTop + 208.0F);
+    }
+    layout.advancedDooLayoutInfo = D2D1::RectF(
+        advancedLeft + advancedWidth - 58.0F, advancedTop + 145.0F,
+        advancedLeft + advancedWidth - 34.0F, advancedTop + 169.0F);
     for (std::size_t index = 0; index < layout.advancedSliders.size(); ++index) {
-        const float top = advancedTop + 158.0F + static_cast<float>(index) * 60.0F;
+        const float top = advancedTop + 216.0F + static_cast<float>(index) * 52.0F;
         layout.advancedSliders[index] = D2D1::RectF(
-            advancedLeft + 34.0F, top, advancedLeft + advancedWidth - 34.0F, top + 54.0F);
+            advancedLeft + 34.0F, top, advancedLeft + advancedWidth - 34.0F, top + 48.0F);
         layout.advancedSliderInfo[index] = D2D1::RectF(
             layout.advancedSliders[index].right - 142.0F, top,
             layout.advancedSliders[index].right - 118.0F, top + 24.0F);
@@ -1157,6 +1169,16 @@ App::Target App::hitTest(const float x, const float y) const
 {
     const auto layout = calculateLayout();
     if (showAdvanced_) {
+        if (contains(layout.advancedDooLayoutInfo, x, y)) {
+            return Target::AdvancedDooLayoutInfo;
+        }
+        for (std::size_t index = 0; index < layout.advancedDooLayouts.size(); ++index) {
+            if (contains(layout.advancedDooLayouts[index], x, y)) {
+                return static_cast<Target>(
+                    static_cast<int>(Target::AdvancedDooAutomatic) +
+                    static_cast<int>(index));
+            }
+        }
         for (std::size_t index = 0; index < layout.advancedToggleInfo.size(); ++index) {
             if (contains(layout.advancedToggleInfo[index], x, y)) {
                 return static_cast<Target>(
@@ -1339,10 +1361,12 @@ void App::stepSlider(const Target target, const int direction)
 void App::moveFocus(const bool backwards)
 {
     if (showAdvanced_) {
-        constexpr std::array<Target, 24> targets{
+        constexpr std::array<Target, 28> targets{
             Target::AdvancedCoherentFilter, Target::AdvancedCoherentFilterInfo,
             Target::AdvancedAlphaTerrain, Target::AdvancedAlphaTerrainInfo,
             Target::AdvancedCliffWalls, Target::AdvancedCliffWallsInfo,
+            Target::AdvancedDooAutomatic, Target::AdvancedDooClassic,
+            Target::AdvancedDooModern, Target::AdvancedDooLayoutInfo,
             Target::AdvancedGaussianRadius, Target::AdvancedGaussianRadiusInfo,
             Target::AdvancedCoverageThreshold, Target::AdvancedCoverageThresholdInfo,
             Target::AdvancedSunSoftness, Target::AdvancedSunSoftnessInfo,
@@ -1553,6 +1577,18 @@ void App::activate(const Target target)
         cliffWalls_ = !cliffWalls_;
         calculationDirty_ = previewKind_ == PreviewKind::Calculated;
         break;
+    case Target::AdvancedDooAutomatic:
+        dooLayoutMode_ = DOOLayoutMode::Automatic;
+        calculationDirty_ = previewKind_ == PreviewKind::Calculated;
+        break;
+    case Target::AdvancedDooClassic:
+        dooLayoutMode_ = DOOLayoutMode::Classic;
+        calculationDirty_ = previewKind_ == PreviewKind::Calculated;
+        break;
+    case Target::AdvancedDooModern:
+        dooLayoutMode_ = DOOLayoutMode::Modern;
+        calculationDirty_ = previewKind_ == PreviewKind::Calculated;
+        break;
     case Target::AdvancedGaussianRadius:
     case Target::AdvancedCoverageThreshold:
     case Target::AdvancedSunSoftness:
@@ -1564,6 +1600,7 @@ void App::activate(const Target target)
     case Target::AdvancedCoherentFilterInfo:
     case Target::AdvancedAlphaTerrainInfo:
     case Target::AdvancedCliffWallsInfo:
+    case Target::AdvancedDooLayoutInfo:
     case Target::AdvancedGaussianRadiusInfo:
     case Target::AdvancedCoverageThresholdInfo:
     case Target::AdvancedSunSoftnessInfo:
@@ -1584,6 +1621,7 @@ void App::activate(const Target target)
         maximumCasterHorizontalSpan_ = 16384.0F;
         ignoreTransparentTerrain_ = true;
         cliffWalls_ = false;
+        dooLayoutMode_ = DOOLayoutMode::Automatic;
         calculationDirty_ = previewKind_ == PreviewKind::Calculated;
         setStatus(L"Advanced shadow settings restored to recommended defaults.",
                   StatusKind::Neutral);
@@ -1912,6 +1950,14 @@ void App::showAdvancedInfo(const Target target) const
                   L"This is experimental: it can improve deep cliff shadows, but decorative "
                   L"cliffs may become too dark. Off is the recommended default.";
         break;
+    case Target::AdvancedDooLayoutInfo:
+        title = L"Doodad file compatibility";
+        message = L"Controls how version-8 war3map.doo placement records are decoded.\n\n"
+                  L"Automatic validates both classic and modern layouts and selects the only "
+                  L"structurally valid result. Classic supports older patches such as 1.27 "
+                  L"without skin rawcodes. Modern expects Reforged-era skin rawcodes. Use an "
+                  L"override only for protected or structurally ambiguous maps.";
+        break;
     case Target::AdvancedGaussianRadiusInfo:
         title = L"Gaussian radius";
         message = L"Controls how many neighboring SHD cells influence a filtered outline.\n\n"
@@ -1974,7 +2020,7 @@ void App::saveShadowPreset()
         std::ostringstream stream;
         stream.imbue(std::locale::classic());
         stream << "# ShadowMap Tool preset\n"
-               << "version=1\n"
+               << "version=2\n"
                << "includeTerrain=" << includeTerrain_ << '\n'
                << "includeDoodads=" << includeDoodads_ << '\n'
                << "includeDestructibles=" << includeDestructibles_ << '\n'
@@ -1998,6 +2044,7 @@ void App::saveShadowPreset()
                << "workerThreads=" << workerThreads_ << '\n'
                << "ignoreAlphaTerrain=" << ignoreTransparentTerrain_ << '\n'
                << "cliffWalls=" << cliffWalls_ << '\n';
+        stream << "dooLayout=" << dooLayoutModeName(dooLayoutMode_) << '\n';
         const auto text = stream.str();
         const auto bytes = std::as_bytes(std::span(text.data(), text.size()));
         writeBinaryFileAtomic(*output, bytes, true);
@@ -2016,9 +2063,7 @@ void App::loadShadowPreset()
         if (!selected) return;
         validatePresetPath(*selected, directory);
         const auto values = parsePresetText(readBinaryFile(*selected, 64U * 1024U));
-        if (presetUnsigned(values, "version", 1U, 1U) != 1U) {
-            throw std::runtime_error("Unsupported preset version");
-        }
+        const auto presetVersion = presetUnsigned(values, "version", 1U, 2U);
 
         const bool includeTerrain = presetBool(values, "includeTerrain");
         const bool includeDoodads = presetBool(values, "includeDoodads");
@@ -2053,6 +2098,17 @@ void App::loadShadowPreset()
         const auto workerThreads = presetUnsigned(values, "workerThreads", 0U, 32U);
         const bool ignoreAlphaTerrain = presetBool(values, "ignoreAlphaTerrain");
         const bool cliffWalls = presetBool(values, "cliffWalls");
+        DOOLayoutMode dooLayoutMode = DOOLayoutMode::Automatic;
+        if (presetVersion >= 2U) {
+            const auto& dooLayout = requiredPresetValue(values, "dooLayout");
+            if (dooLayout == "automatic") dooLayoutMode = DOOLayoutMode::Automatic;
+            else if (dooLayout == "classic") dooLayoutMode = DOOLayoutMode::Classic;
+            else if (dooLayout == "modern") dooLayoutMode = DOOLayoutMode::Modern;
+            else {
+                throw std::runtime_error(
+                    "Preset dooLayout must be 'automatic', 'classic', or 'modern'");
+            }
+        }
 
         includeTerrain_ = includeTerrain;
         includeDoodads_ = includeDoodads;
@@ -2072,6 +2128,7 @@ void App::loadShadowPreset()
         workerThreads_ = workerThreads;
         ignoreTransparentTerrain_ = ignoreAlphaTerrain;
         cliffWalls_ = cliffWalls;
+        dooLayoutMode_ = dooLayoutMode;
         calculationDirty_ = previewKind_ == PreviewKind::Calculated;
         setStatus(L"Loaded shadow preset: " + selected->filename().wstring(),
                   StatusKind::Success);
@@ -2173,7 +2230,11 @@ void App::calculateShadows()
         options.destructibles = includeDestructibles_;
         options.honorIgnoreShadowRegions = honorIgnoreRegions_;
         options.ignoreTransparentTerrain = ignoreTransparentTerrain_;
+        options.dooLayoutMode = dooLayoutMode_;
         auto generated = generateShadowMap(source, assets, options);
+        for (const auto& diagnostic : generated.diagnostics) {
+            logEvent(StatusKind::Neutral, widen(diagnostic));
+        }
         for (const auto& warning : generated.warnings) {
             logEvent(StatusKind::Warning, widen(warning));
         }
@@ -2182,6 +2243,8 @@ void App::calculateShadows()
                        << L", terrain=" << (includeTerrain_ ? L"on" : L"off")
                        << L", doodads=" << (includeDoodads_ ? L"on" : L"off")
                        << L", destructibles=" << (includeDestructibles_ ? L"on" : L"off")
+                       << L", doo-layout-override="
+                       << widen(dooLayoutModeName(dooLayoutMode_))
                        << L", geometry="
                        << (terrainGeometry_ == TerrainGeometryMode::SmoothSubTile
                                ? L"smooth-sub-tile" : L"classic-triangles")
@@ -2685,6 +2748,24 @@ void App::paint()
             drawButton(layout.advancedToggleInfo[index], L"i", target, false);
         }
 
+        drawText(L"Doodad file compatibility",
+                 D2D1::RectF(advancedLeft + 34.0F, advancedTop + 145.0F,
+                             advancedCard.right - 66.0F, advancedTop + 169.0F),
+                 smallFormat_.Get(), mutedBrush_.Get());
+        drawButton(layout.advancedDooLayoutInfo, L"i",
+                   Target::AdvancedDooLayoutInfo, false);
+        constexpr std::array<std::wstring_view, 3> dooLayoutLabels{
+            L"Automatic", L"Classic (1.27-)", L"Modern"};
+        constexpr std::array<DOOLayoutMode, 3> dooLayoutModes{
+            DOOLayoutMode::Automatic, DOOLayoutMode::Classic, DOOLayoutMode::Modern};
+        for (std::size_t index = 0; index < dooLayoutLabels.size(); ++index) {
+            const auto target = static_cast<Target>(
+                static_cast<int>(Target::AdvancedDooAutomatic) +
+                static_cast<int>(index));
+            drawButton(layout.advancedDooLayouts[index], dooLayoutLabels[index],
+                       target, dooLayoutMode_ == dooLayoutModes[index]);
+        }
+
         const auto radiusValue = gaussianRadius_ == 0U
             ? std::wstring(L"Off")
             : std::to_wstring(gaussianRadius_) + L" cell" +
@@ -2733,7 +2814,8 @@ void App::paint()
             drawButton(layout.advancedSliderInfo[index], L"i", target, false);
         }
         drawText(
-            L"Recommended: coherent filter on, radius 1, cutoff 45%, sun softness 1.00°, "
+            L"Recommended: automatic compatibility, coherent filter on, radius 1, "
+            L"cutoff 45%, sun softness 1.00°, "
             L"bias 2.0, island 4, "
             L"caster span 16384. "
             L"Cliff walls are experimental and may over-darken decorative cliffs.",

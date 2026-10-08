@@ -2,6 +2,7 @@
 
 #include "archive/MapArchive.hpp"
 #include "assets/AssetProvider.hpp"
+#include "formats/DOO.hpp"
 #include "formats/W3E.hpp"
 #include "geometry/Geometry.hpp"
 #include "shadow/ShadowMap.hpp"
@@ -35,6 +36,7 @@ struct GenerationOptions {
     bool destructibles = true;
     bool honorIgnoreShadowRegions = true;
     bool ignoreTransparentTerrain = true;
+    DOOLayoutMode dooLayoutMode = DOOLayoutMode::Automatic;
 };
 
 struct GenerationStats {
@@ -75,6 +77,7 @@ struct GenerationResult {
     ShadowMap shadow;
     GenerationStats stats;
     std::vector<std::string> warnings;
+    std::vector<std::string> diagnostics;
     std::vector<Triangle> sceneTriangles;
 };
 

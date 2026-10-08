@@ -10,6 +10,17 @@
 
 namespace w3shadow {
 
+enum class DOOLayoutMode {
+    Automatic,
+    Classic,
+    Modern
+};
+
+enum class DOOLayout {
+    Classic,
+    Modern
+};
+
 struct DoodadPlacement {
     std::string rawcode;
     std::string skinRawcode;
@@ -41,11 +52,18 @@ struct DOOParseResult {
     std::uint32_t specialVersion = 0;
     std::vector<SpecialDoodadPlacement> specialPlacements;
     std::size_t trailingBytes = 0;
+    DOOLayout layout = DOOLayout::Classic;
+    std::string layoutReason;
     std::string error;
 
     [[nodiscard]] explicit operator bool() const noexcept { return error.empty(); }
 };
 
-[[nodiscard]] DOOParseResult parseDOO(std::span<const std::byte> bytes);
+[[nodiscard]] DOOParseResult parseDOO(
+    std::span<const std::byte> bytes,
+    DOOLayoutMode mode = DOOLayoutMode::Automatic);
+
+[[nodiscard]] const char* dooLayoutName(DOOLayout layout) noexcept;
+[[nodiscard]] const char* dooLayoutModeName(DOOLayoutMode mode) noexcept;
 
 } // namespace w3shadow

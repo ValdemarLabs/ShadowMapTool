@@ -88,7 +88,7 @@ To calculate the complete shadowmap:
 3. Choose whether Terrain, Doodads, and Destructibles contribute shadows.
 4. Choose **Smooth sub-tile** (default) or **Classic triangles** for terrain geometry.
 5. Choose **Ultra 4x** edge quality for the smoothest outline, **Smooth 2x** for a faster compromise, or **Fast 1x** for the original single-ray behavior.
-6. Open **Tuning...** to adjust filtering, sub-cell coverage, terrain ray bias, alpha-terrain handling, or performance. Each setting has an **Info** button with behavior and value examples. The recommended defaults suit most maps.
+6. Open **Tuning...** to adjust filtering, sub-cell coverage, terrain ray bias, alpha-terrain handling, doodad-file compatibility, or performance. Each setting has an **Info** button with behavior and value examples. The recommended defaults suit most maps.
 7. Keep the default light-travel vector `(1, 1, -2)`, or enter custom X/Y/Z values. The higher default sun halves the horizontal displacement produced by `(1, 1, -1)`, keeping elevated bridges and tall trees better anchored. Use **Sun softness** in **Tuning...** to shape less rigid projected contours; softness does not shorten the projection.
 8. Select **Calculate shadows**. This renders the complete proposed SHD in memory and does not modify or create a map.
 9. Inspect the calculated full-map preview and warning count. Change settings and calculate again if needed.
@@ -103,6 +103,8 @@ Terrain receivers use a slope-aware origin bias of 2 world units by default. Thi
 
 **Save preset** and **Load preset** in **Tuning...** preserve the complete shadow-calculation configuration, including caster toggles, terrain mode, edge quality, light vector, filtering, cleanup, and performance settings. Versioned `.w3sp` files are stored in the `Presets` folder beside `w3shadow-gui.exe`; invalid, incomplete, or out-of-range files are rejected without partially changing the current settings.
 
+**Doodad file compatibility** defaults to **Automatic**. DOO v7 is decoded as classic and DOO v13 as modern. Because classic TFT and Reforged-era maps can both identify as DOO v8.11, Automatic validates the complete file using both record layouts and selects the only structurally valid result. Use **Classic (1.27-)** or **Modern** only as an override for protected or structurally ambiguous maps. The session log records the selected layout and why it was chosen.
+
 Placed doodad/destructible scale is applied independently on X, Y, and Z before rotation and translation. **Maximum caster span** defaults to 16,384 world units and excludes unusually large enclosing domes, sky shells, and backdrop models before ray casting; these models otherwise create map-sized dark regions even when their visible surface is mostly outside the camera. The session log names every excluded rawcode/model and its transformed scale/span. Set the control to **Unlimited** or pass `--max-caster-span 0` when a deliberately enormous model should cast a shadow. Nearby ordinary shadows are not unioned during geometry processing, and coherent Gaussian filtering keeps disconnected raw shadow components separate so blur alone cannot bridge them.
 
 The **In place + backup** mode asks for confirmation and preserves a numbered `.w3shadow.bak` copy. Opening a map previews its existing SHD, which can be empty; **Calculate shadows** replaces that view with the newly rendered complete SHD before anything is saved. Changing a calculation option marks the result stale and disables saving until it is recalculated. Diagnostic patterns are only available while **Test mode** is on. **Export SHD** and **Export PNG** export whichever full-map preview is currently shown.
@@ -116,6 +118,8 @@ Open in-app instructions with **? Help** or `F1`. Keyboard users can navigate wi
 The **Logs** button opens the `logs` directory beside the executable. Every GUI run creates a timestamped UTF-8 log containing session lifecycle events, selected asset backend, loaded maps, successes, warnings, and failures. If the executable directory is not writable, logs fall back to `%LOCALAPPDATA%\ShadowMapTool\logs`. The **About** panel contains expandable purpose, origin, compatibility, limitation, and credit sections.
 
 ## Warcraft version compatibility
+
+Classic and modern DOO v8 records are both supported through structural layout detection, with explicit overrides available for ambiguous or protected maps.
 
 The intended target is current Warcraft III 3.0. Direct legacy asset access has also been validated against the supplied Warcraft III 1.27b installation: its stock SLK databases and classic MDX models resolve from MPQ, and a complete 64 × 64 reference-map calculation resolved all 50 placed objects with zero unresolved models. The parser covers legacy W3E v11, DOO v7/v8, W3R v5, object-data v1-v3, and MDX 800 inputs.
 
@@ -166,6 +170,7 @@ Useful generation options:
 - `--cliff-walls` enables experimental discrete cliff-layer wall occluders;
 - `--no-alpha-terrain-mask` disables fully transparent terrain receiver detection;
 - `--no-terrain`, `--no-doodads`, and `--no-destructibles` isolate geometry categories;
+- `--doo-layout auto|classic|modern` overrides ambiguous doodad-file layout detection;
 - `--no-honor-ignore-shadow` disables `IgnoreShadow...` region clearing;
 - `--in-place` modifies the input only after creating a backup;
 - `--force` permits overwriting an existing copy/diagnostic file, never the input map.

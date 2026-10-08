@@ -2,6 +2,18 @@
 
 This changelog records notable ShadowMapTool releases and development changes.
 
+## Unreleased - 8.10.2026
+
+### Added
+
+- Added structural auto-detection for ambiguous DOO v8 files by validating both classic records without skin rawcodes and modern records with skin rawcodes.
+- Added **Automatic**, **Classic (1.27-)**, and **Modern** doodad-file compatibility controls to Advanced tuning, version-2 preset persistence, and the matching `--doo-layout` CLI override.
+- Added GUI session-log and CLI diagnostics that report the selected DOO layout and the structural reason for the selection.
+
+### Fixed
+
+- Fixed classic TFT-era DOO v8 maps failing shadow calculation with misleading dropped-item count errors after their flags and item-table fields were misaligned as a modern skin rawcode.
+
 ## [1.3.2] - 3.10.2026
 
 ShadowMapTool 1.3.2 improves model-shadow accuracy, adds reusable tuning presets and softer sun-shaped contours, and makes difficult map assets easier to identify and control.

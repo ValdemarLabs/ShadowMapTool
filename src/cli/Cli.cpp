@@ -63,6 +63,7 @@ struct Options {
     std::uint32_t shadowSampleGrid = 4;
     TerrainGeometryMode terrainGeometry = TerrainGeometryMode::SmoothSubTile;
     ShadowCoverageMode coverageMode = ShadowCoverageMode::CoherentFilter;
+    DOOLayoutMode dooLayoutMode = DOOLayoutMode::Automatic;
     bool terrain = true;
     bool cliffWalls = false;
     bool doodads = true;
@@ -86,6 +87,7 @@ void printHelp()
         "               [--smooth-terrain | --classic-terrain] [--hard-edges]\n"
         "               [--no-terrain] [--no-doodads] [--no-destructibles]\n"
         "               [--cliff-walls] [--no-alpha-terrain-mask]\n"
+        "               [--doo-layout auto|classic|modern]\n"
         "               [--no-honor-ignore-shadow] [--casc-lib FILE]\n"
         "               [--png FILE] [--dump-shadow FILE] [--dump-scene FILE] [--force]\n"
         "  pattern --map-width W --map-height H --pattern NAME --output FILE [--png FILE] [--force]\n"
@@ -214,6 +216,15 @@ Options parseOptions(const int argc, char* argv[], const int first)
             options.terrainGeometry = TerrainGeometryMode::SmoothSubTile;
         } else if (argument == "--classic-terrain") {
             options.terrainGeometry = TerrainGeometryMode::ClassicTriangulated;
+        } else if (argument == "--doo-layout") {
+            const auto value = requireValue(argument);
+            if (value == "auto") options.dooLayoutMode = DOOLayoutMode::Automatic;
+            else if (value == "classic") options.dooLayoutMode = DOOLayoutMode::Classic;
+            else if (value == "modern") options.dooLayoutMode = DOOLayoutMode::Modern;
+            else {
+                throw std::invalid_argument(
+                    "--doo-layout requires auto, classic, or modern");
+            }
         } else if (argument == "--hard-edges") {
             options.coverageMode = ShadowCoverageMode::ClassicMajority;
         } else if (argument == "--no-terrain") {
@@ -344,7 +355,8 @@ int commandInspect(const int argc, char* argv[])
               << " pixels, " << expectedShadowBytes(info) << " bytes\n";
 
     if (archive.contains("war3map.doo")) {
-        const auto doodads = parseDOO(archive.read("war3map.doo"));
+        const auto doodads = parseDOO(
+            archive.read("war3map.doo"), options.dooLayoutMode);
         if (!doodads) {
             std::cout << "DOO: " << doodads.error << '\n';
         } else {
@@ -353,6 +365,7 @@ int commandInspect(const int argc, char* argv[])
                 ++specialTypes[placement.rawcode];
             }
             std::cout << "DOO: version " << doodads.version << '.' << doodads.subversion
+                      << ", " << dooLayoutName(doodads.layout) << " layout"
                       << ", " << doodads.placements.size() << " regular placements, "
                       << doodads.specialPlacements.size() << " special placements";
             if (!doodads.specialPlacements.empty()) {
@@ -361,7 +374,7 @@ int commandInspect(const int argc, char* argv[])
             if (doodads.trailingBytes != 0U) {
                 std::cout << ", " << doodads.trailingBytes << " unparsed trailing bytes";
             }
-            std::cout << '\n';
+            std::cout << "\nDOO layout selection: " << doodads.layoutReason << '\n';
             for (const auto& [rawcode, count] : specialTypes) {
                 std::cout << "  Special " << rawcode << ": " << count << '\n';
             }
@@ -521,6 +534,7 @@ int commandGenerate(const int argc, char* argv[])
     generation.maximumCasterHorizontalSpan = options.maximumCasterHorizontalSpan;
     generation.honorIgnoreShadowRegions = options.honorIgnoreShadowRegions;
     generation.ignoreTransparentTerrain = options.ignoreTransparentTerrain;
+    generation.dooLayoutMode = options.dooLayoutMode;
     auto result = generateShadowMap(archive, assets, generation);
     const auto warcraftBytes = result.shadow.warcraftBytes();
 
@@ -573,6 +587,9 @@ int commandGenerate(const int argc, char* argv[])
               << std::fixed << std::setprecision(3) << total << " s"
               << " (load " << result.stats.loadSeconds << ", BVH " << result.stats.bvhSeconds
               << ", rays " << result.stats.raySeconds << ")\n";
+    for (const auto& diagnostic : result.diagnostics) {
+        std::cout << "INFO: " << diagnostic << '\n';
+    }
     for (const auto& warning : result.warnings) std::cerr << "WARN: " << warning << '\n';
     return static_cast<int>(ExitCode::Success);
 }

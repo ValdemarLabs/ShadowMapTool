@@ -73,6 +73,10 @@ private:
         AdvancedCoherentFilter,
         AdvancedAlphaTerrain,
         AdvancedCliffWalls,
+        AdvancedDooAutomatic,
+        AdvancedDooClassic,
+        AdvancedDooModern,
+        AdvancedDooLayoutInfo,
         AdvancedGaussianRadius,
         AdvancedCoverageThreshold,
         AdvancedSunSoftness,
@@ -131,6 +135,8 @@ private:
         D2D1_RECT_F status{};
         std::array<D2D1_RECT_F, 3> advancedToggles{};
         std::array<D2D1_RECT_F, 3> advancedToggleInfo{};
+        std::array<D2D1_RECT_F, 3> advancedDooLayouts{};
+        D2D1_RECT_F advancedDooLayoutInfo{};
         std::array<D2D1_RECT_F, 7> advancedSliders{};
         std::array<D2D1_RECT_F, 7> advancedSliderInfo{};
         D2D1_RECT_F advancedReset{};
@@ -267,6 +273,7 @@ private:
     std::uint32_t workerThreads_ = 0;
     bool ignoreTransparentTerrain_ = true;
     bool cliffWalls_ = false;
+    DOOLayoutMode dooLayoutMode_ = DOOLayoutMode::Automatic;
     std::filesystem::path logsDirectory_;
     std::filesystem::path sessionLogPath_;
     std::ofstream sessionLog_;

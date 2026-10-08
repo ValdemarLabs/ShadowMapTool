@@ -157,8 +157,12 @@ GenerationResult generateShadowMap(
     result.stats.ignoredRegions = ignoreShadowRegions.size();
 
     if ((options.doodads || options.destructibles) && archive.contains("war3map.doo")) {
-        const auto placements = parseDOO(archive.read("war3map.doo"));
+        const auto placements = parseDOO(
+            archive.read("war3map.doo"), options.dooLayoutMode);
         if (!placements) throw std::runtime_error(placements.error);
+        result.diagnostics.push_back(
+            std::string("DOO layout: ") + dooLayoutName(placements.layout) +
+            " (" + placements.layoutReason + ")");
         result.stats.placements = placements.placements.size();
 
         ObjectDatabase objects;
