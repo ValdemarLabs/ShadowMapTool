@@ -6,7 +6,7 @@ if(CMAKE_VERSION VERSION_GREATER_EQUAL 4.0)
     set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 endif()
 
-project(ShadowMapTool VERSION 1.3.2 LANGUAGES C CXX)
+project(ShadowMapTool VERSION 1.3.3 LANGUAGES C CXX)
 
 include(FetchContent)
 include(CTest)
