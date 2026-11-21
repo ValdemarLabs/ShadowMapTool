@@ -1,16 +1,21 @@
-# ShadowMap Tool v1.3.3
+# ShadowMapTool v1.3.4
 
-This release restores shadow generation for older Warcraft III maps while keeping current maps automatic and easy to use.
+This release fixes inherited Object Editor shadow settings and adds an optional per-map exclusion list for troublesome doodads and destructibles.
 
 ## Highlights
 
-- Older maps, including maps from the Warcraft III 1.27 era, are now recognized correctly.
-- ShadowMapTool automatically chooses the right compatibility setting for most maps.
-- Added Classic and Modern overrides for unusual or protected maps.
-- Fixed the misleading **invalid dropped-item count** error caused by older map data.
-- Logs now explain which compatibility setting was selected and why.
-- Compatibility choices are preserved in saved presets.
+- Fixed objects casting shadows when their inherited **Has shadow** setting is False. Explicit False overrides already worked; stock numeric defaults are now handled correctly too. Thanks to **HerrDave** for finding and reporting the bug.
+- Added **Exclusions**, a searchable list of placed object types with names, IDs, model paths, placement counts, and resolved shadow settings.
+- Nothing is excluded by default. Checking a type excludes all its placements; unchecking it restores normal Object Editor behavior and never forces False objects to cast shadows.
+- Exclusions are saved beside each map, shared by the GUI and CLI, and preserved with generated map copies. Global tuning presets do not change them.
+- Added clearer filtering diagnostics and a reproducible guide for investigating custom-model shadows. Malformed object overrides now stop calculation instead of continuing with incomplete settings.
 
-The full details are available in the [changelog](https://github.com/ValdemarLabs/ShadowMapTool/blob/main/CHANGELOG.md).
+## Using exclusions
 
-As always, **Save as copy** is the recommended first run. Open the generated copy in Warcraft III and inspect it before replacing a working map.
+Open a map, select **Exclusions**, check the types to suppress, and select **Apply**. Calculate shadows again before saving. **Cancel** discards pending changes; **Clear exclusions** returns to Object Editor settings.
+
+Keep the `<map filename>.w3shadow-exclusions` file with its map when moving or renaming it. No map object data is changed by the exclusion list.
+
+The Windows download includes the GUI, CLI, CascLib runtime, documentation, and [diagnostic guide](https://github.com/ValdemarLabs/ShadowMapTool/blob/v1.3.4/docs/doodad-shadow-diagnostics.md). See the [changelog](https://github.com/ValdemarLabs/ShadowMapTool/blob/v1.3.4/CHANGELOG.md) for full details.
+
+Build, regression, GUI smoke, and GUI/CLI exclusion-persistence checks passed locally. The original reported map/model still requires in-game confirmation. **Save as copy** remains the recommended first run.

@@ -53,6 +53,7 @@ if (-not $SkipBuild) {
 }
 
 $binaryDir = Join-Path $buildDir $Configuration
+$diagnosticGuide = Join-Path $projectRoot "docs\doodad-shadow-diagnostics.md"
 $files = @(
     (Join-Path $binaryDir "w3shadow-gui.exe"),
     (Join-Path $binaryDir "w3shadow.exe"),
@@ -61,7 +62,7 @@ $files = @(
     (Join-Path $projectRoot "CHANGELOG.md"),
     (Join-Path $projectRoot "THIRD_PARTY_NOTICES.md")
 )
-foreach ($file in $files) {
+foreach ($file in ($files + @($diagnosticGuide))) {
     if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
         throw "Required release file is missing: $file"
     }
@@ -76,6 +77,9 @@ if (Test-Path -LiteralPath $zipPath) {
 }
 New-Item -ItemType Directory -Path $stageDir | Out-Null
 Copy-Item -LiteralPath $files -Destination $stageDir
+$stageDocs = Join-Path $stageDir "docs"
+New-Item -ItemType Directory -Path $stageDocs | Out-Null
+Copy-Item -LiteralPath $diagnosticGuide -Destination $stageDocs
 Compress-Archive -LiteralPath $stageDir -DestinationPath $zipPath -CompressionLevel Optimal
 
 $hash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()

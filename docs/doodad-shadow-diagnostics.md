@@ -1,6 +1,6 @@
 # Doodad shadow diagnosis and regression checks
 
-## Confirmed defect ? 21 November 2026
+## Confirmed defect - 21 November 2026
 
 Stock SLK/profile shadow fields can contain numeric text: `shadow=0` means False and `shadow=1` means True. The old `hasShadowValue` implementation accepted every nonempty string except `_`, so it incorrectly accepted `0`. The installed modern `DoodadSkins.txt` inspected during diagnosis contained 260 `shadow=0` entries. An example is `APms` (Ashenvale mushrooms).
 
