@@ -535,6 +535,7 @@ int commandGenerate(const int argc, char* argv[])
     generation.honorIgnoreShadowRegions = options.honorIgnoreShadowRegions;
     generation.ignoreTransparentTerrain = options.ignoreTransparentTerrain;
     generation.dooLayoutMode = options.dooLayoutMode;
+    generation.excludedObjectIds = loadShadowExclusions(mapPath);
     auto result = generateShadowMap(archive, assets, generation);
     const auto warcraftBytes = result.shadow.warcraftBytes();
 
@@ -547,6 +548,12 @@ int commandGenerate(const int argc, char* argv[])
         std::cout << "Updated " << mapPath.string() << "\nBackup: " << backup.string() << '\n';
     } else {
         MapArchive::replaceShadowInCopy(mapPath, *options.output, warcraftBytes, options.force);
+        if (!generation.excludedObjectIds.empty() || std::filesystem::exists(shadowExclusionsPath(*options.output))) {
+            try { saveShadowExclusions(*options.output, generation.excludedObjectIds); }
+            catch (const std::exception& error) {
+                std::cerr << "WARN: map saved, but exclusion settings could not be copied: " << error.what() << '\n';
+            }
+        }
         std::cout << "Wrote validated map copy: " << options.output->string() << '\n';
     }
     const auto total = result.stats.loadSeconds + result.stats.bvhSeconds + result.stats.raySeconds;

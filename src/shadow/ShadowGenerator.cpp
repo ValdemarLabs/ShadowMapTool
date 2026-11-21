@@ -34,12 +34,6 @@ double elapsed(const Clock::time_point start, const Clock::time_point end)
     return std::chrono::duration<double>(end - start).count();
 }
 
-std::optional<std::vector<std::byte>> optionalArchiveFile(
-    const MapArchive& archive, const std::string_view path)
-{
-    return archive.contains(path) ? std::optional(archive.read(path)) : std::nullopt;
-}
-
 std::string lower(std::string value)
 {
     std::transform(value.begin(), value.end(), value.begin(),
@@ -165,16 +159,7 @@ GenerationResult generateShadowMap(
             " (" + placements.layoutReason + ")");
         result.stats.placements = placements.placements.size();
 
-        ObjectDatabase objects;
-        objects.loadStock(assets);
-        try {
-            objects.applyMapOverrides(optionalArchiveFile(archive, "war3map.w3d"),
-                                      optionalArchiveFile(archive, "war3map.w3b"));
-            objects.applyMapOverrides(optionalArchiveFile(archive, "war3mapSkin.w3d"),
-                                      optionalArchiveFile(archive, "war3mapSkin.w3b"));
-        } catch (const std::exception& error) {
-            result.warnings.push_back(std::string("custom object data: ") + error.what());
-        }
+        const auto objects = loadMapObjectDatabase(archive, assets);
         result.warnings.insert(result.warnings.end(), objects.warnings().begin(), objects.warnings().end());
 
         std::unordered_map<std::string, MDXModel> modelCache;
@@ -184,10 +169,11 @@ GenerationResult generateShadowMap(
         std::unordered_map<std::string, std::uint64_t> oversizedCasterWarnings;
         for (const auto& placement : placements.placements) {
             if (placement.life == 0U) continue;
-            const auto validSkin = placement.skinRawcode.size() == 4U &&
-                placement.skinRawcode != std::string(4U, '\0');
-            const auto* definition = validSkin ? objects.find(placement.skinRawcode) : nullptr;
-            if (definition == nullptr) definition = objects.find(placement.rawcode);
+            if (options.excludedObjectIds.contains(placement.rawcode)) {
+                ++result.stats.excludedPlacements;
+                continue;
+            }
+            const auto* definition = placementDefinition(objects, placement);
             if (definition == nullptr) {
                 ++result.stats.unresolvedPlacements;
                 ++unresolvedWarnings["unresolved object " + placement.rawcode];
@@ -195,7 +181,10 @@ GenerationResult generateShadowMap(
             }
             if ((definition->destructible && !options.destructibles) ||
                 (!definition->destructible && !options.doodads)) continue;
-            if (!definition->castsShadow) continue;
+            if (!definition->castsShadow) {
+                ++result.stats.noShadowPlacements;
+                continue;
+            }
 
             const MDXModel* model = nullptr;
             std::string selectedPath;
@@ -332,6 +321,9 @@ GenerationResult generateShadowMap(
             result.warnings.push_back(warning + " (" + std::to_string(count) +
                                       (count == 1U ? " placement)" : " placements)"));
         }
+        result.diagnostics.push_back("Object shadow filtering: " +
+            std::to_string(result.stats.noShadowPlacements) + " placements disabled by object data, " +
+            std::to_string(result.stats.excludedPlacements) + " placements excluded by this map's list");
         result.stats.uniqueModels = modelCache.size();
         if (result.stats.resolvedPlacements == 0U && result.stats.unresolvedPlacements > 0U) {
             throw std::runtime_error(

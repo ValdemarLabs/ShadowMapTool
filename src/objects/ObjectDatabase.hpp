@@ -14,6 +14,7 @@ namespace w3shadow {
 struct ObjectDefinition {
     std::string rawcode;
     std::string modelPath;
+    std::string name;
     std::uint32_t variationCount = 1;
     std::string shadowTexture;
     bool castsShadow = true;

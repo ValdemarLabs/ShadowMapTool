@@ -66,6 +66,7 @@ add_library(w3shadow_core
     src/formats/MDX.cpp
     src/geometry/BVH.cpp
     src/objects/ObjectDatabase.cpp
+    src/objects/ShadowExclusions.cpp
     src/formats/Png.cpp
     src/formats/W3R.cpp
     src/formats/W3E.cpp
@@ -116,11 +117,12 @@ if(WIN32)
     add_executable(w3shadow-gui WIN32
         resources/w3shadow-gui.rc
         src/gui/App.cpp
+        src/gui/ExclusionsDialog.cpp
         src/gui/WinMain.cpp
     )
     target_link_libraries(
         w3shadow-gui
-        PRIVATE w3shadow_core d2d1 dwrite dwmapi ole32 shell32 comdlg32 advapi32
+        PRIVATE w3shadow_core d2d1 dwrite dwmapi ole32 shell32 comdlg32 advapi32 comctl32
     )
     if(TARGET casc)
         add_dependencies(w3shadow-gui casc)

@@ -3,6 +3,7 @@
 #include "archive/MapArchive.hpp"
 #include "assets/AssetProvider.hpp"
 #include "formats/DOO.hpp"
+#include "objects/ShadowExclusions.hpp"
 #include "formats/W3E.hpp"
 #include "geometry/Geometry.hpp"
 #include "shadow/ShadowMap.hpp"
@@ -19,6 +20,7 @@ enum class ShadowCoverageMode {
 };
 
 struct GenerationOptions {
+    ShadowExclusions excludedObjectIds;
     Vec3 lightDirection{1.0F, 1.0F, -2.0F};
     float sunAngularRadiusDegrees = 1.0F;
     std::uint32_t threadCount = 0;
@@ -46,6 +48,8 @@ struct GenerationStats {
     std::size_t resolvedPlacements = 0;
     std::size_t unresolvedPlacements = 0;
     std::size_t uniqueModels = 0;
+    std::size_t excludedPlacements = 0;
+    std::size_t noShadowPlacements = 0;
     std::size_t triangles = 0;
     std::size_t cliffWallTriangles = 0;
     std::size_t materialFilteredTriangles = 0;

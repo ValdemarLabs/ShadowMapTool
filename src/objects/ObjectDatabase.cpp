@@ -38,7 +38,7 @@ std::string trim(std::string value)
 
 bool hasShadowValue(const std::string_view value)
 {
-    return !value.empty() && value != "_";
+    return !value.empty() && value != "_" && value != "0";
 }
 
 std::vector<std::string> splitSlkLine(const std::string_view line)
@@ -184,6 +184,10 @@ void ObjectDatabase::loadSlk(const std::span<const std::byte> bytes, const bool 
         ObjectDefinition definition;
         definition.rawcode = rawcode;
         definition.modelPath = model;
+        definition.name = rowValue(row, "name");
+        if (definition.name.empty() || definition.name.starts_with("WESTRING_")) {
+            definition.name = rowValue(row, "comment");
+        }
         definition.variationCount = positiveInteger(row, "numvar", 1U);
         definition.shadowTexture = rowValue(row, "shadow");
         definition.castsShadow = hasShadowValue(definition.shadowTexture);
@@ -226,6 +230,10 @@ void ObjectDatabase::loadProfile(
         const auto value = trim(line.substr(equals + 1U));
         if (key == "file") {
             definition.modelPath = value;
+        } else if (key == "name" && !value.starts_with("WESTRING_")) {
+            definition.name = value;
+        } else if (key == "comment" && definition.name.empty()) {
+            definition.name = value;
         } else if (key == "numvar") {
             std::uint32_t parsed = 1U;
             const auto result = std::from_chars(
@@ -305,6 +313,9 @@ void ObjectDatabase::applyObjectFile(const std::span<const std::byte> bytes, con
                 static_cast<void>(reader.readTag("modification terminator"));
                 if (stringValue && (field == "dfil" || field == "bfil" || hasModelExtension(*stringValue))) {
                     definition.modelPath = *stringValue;
+                }
+                if (stringValue && (field == "dnam" || field == "bnam")) {
+                    definition.name = *stringValue;
                 }
                 if (stringValue && (field == "dshd" || field == "bshd")) {
                     definition.shadowTexture = *stringValue;

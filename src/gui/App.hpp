@@ -43,6 +43,7 @@ private:
         ShadowSamples2,
         ShadowSamples4,
         Advanced,
+        Exclusions,
         PatternBlack,
         PatternWhite,
         PatternChecker,
@@ -111,6 +112,7 @@ private:
         std::array<D2D1_RECT_F, 3> lightEdits{};
         D2D1_RECT_F outputCard{};
         D2D1_RECT_F advanced{};
+        D2D1_RECT_F exclusions{};
         D2D1_RECT_F copyMode{};
         D2D1_RECT_F inPlaceMode{};
         D2D1_RECT_F previewCard{};
@@ -167,6 +169,7 @@ private:
     void updateSlider(Target target, float x);
     void stepSlider(Target target, int direction);
     void chooseMap();
+    void editExclusions();
     void loadMap(const std::filesystem::path& path);
     void selectPattern(Pattern pattern);
     void rebuildPreview();
@@ -261,6 +264,7 @@ private:
     TerrainGeometryMode terrainGeometry_ = TerrainGeometryMode::SmoothSubTile;
     std::uint32_t shadowSampleGrid_ = 4;
     bool calculationDirty_ = false;
+    ShadowExclusions excludedObjectIds_;
     std::optional<std::filesystem::path> warcraftDirectory_;
     std::optional<std::filesystem::path> cascLibrary_;
     ShadowCoverageMode coverageMode_ = ShadowCoverageMode::CoherentFilter;

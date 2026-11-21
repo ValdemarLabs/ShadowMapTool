@@ -1,6 +1,21 @@
 #include <windows.h>
+#include <commctrl.h>
 #include "../src/gui/Resources.h"
 
 1 RT_MANIFEST "w3shadow-gui.manifest"
 IDI_W3SHADOW ICON "favicon.ico"
 
+IDD_EXCLUSIONS DIALOGEX 0, 0, 590, 335
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Map shadow exclusions"
+FONT 9, "Segoe UI"
+BEGIN
+    LTEXT "Check a type to exclude all its placements. Unchecked types follow Object Editor settings.", -1, 10, 10, 570, 14
+    LTEXT "Search:", -1, 10, 31, 35, 12
+    EDITTEXT IDC_EXCLUSION_SEARCH, 48, 29, 532, 16, ES_AUTOHSCROLL
+    CONTROL "", IDC_EXCLUSION_LIST, "SysListView32", WS_TABSTOP | WS_BORDER | LVS_REPORT | LVS_SHOWSELALWAYS, 10, 52, 570, 228
+    LTEXT "", IDC_EXCLUSION_SUMMARY, 10, 286, 570, 14
+    PUSHBUTTON "Clear exclusions", IDC_EXCLUSION_CLEAR, 10, 308, 95, 18
+    DEFPUSHBUTTON "Apply", IDOK, 425, 308, 75, 18
+    PUSHBUTTON "Cancel", IDCANCEL, 505, 308, 75, 18
+END

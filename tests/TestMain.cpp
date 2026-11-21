@@ -454,6 +454,174 @@ void testGeometryAndFormats()
             "additive MDX material geometry was not excluded from static shadows");
 }
 
+void testStockShadowSettings()
+{
+    const auto bytes = [](const std::string& text) {
+        return std::vector<std::byte>(reinterpret_cast<const std::byte*>(text.data()),
+            reinterpret_cast<const std::byte*>(text.data() + text.size()));
+    };
+    MemoryAssets assets;
+    assets.files["Doodads\\Doodads.slk"] = bytes(
+        "ID;PWXL;N;E\nC;X1;Y1;K\"doodID\"\nC;X2;K\"file\"\nC;X3;K\"shadow\"\n"
+        "C;X1;Y2;K\"S000\"\nC;X2;K\"Same.mdx\"\nC;X3;K0\n"
+        "C;X1;Y3;K\"S001\"\nC;X2;K\"Same.mdx\"\nC;X3;K1\nE\n");
+    assets.files["Doodads\\DoodadSkins.txt"] = bytes(
+        "[D000]\nfile=Same.mdx\nshadow=0\ncomment=Disabled doodad\n"
+        "[D001]\nfile=Same.mdx\nshadow=1\n"
+        "[D002]\nfile=Same.mdx\nshadow=_\n"
+        "[D003]\nfile=Same.mdx\nshadow=\n");
+    assets.files["Units\\DestructableSkin.txt"] = bytes(
+        "[B000]\nfile=Tree.mdx\nshadow=TreeShadow\n"
+        "[B001]\nfile=Tree.mdx\nshadow=_\n");
+    w3shadow::ObjectDatabase objects;
+    objects.loadStock(assets);
+    for (const auto* id : {"S000", "D000", "D002", "D003", "B001"}) {
+        require(objects.find(id) && !objects.find(id)->castsShadow,
+            std::string("stock False shadow value was enabled: ") + id);
+    }
+    for (const auto* id : {"S001", "D001", "B000"}) {
+        require(objects.find(id) && objects.find(id)->castsShadow,
+            std::string("stock True/texture shadow value was disabled: ") + id);
+    }
+    // A copied custom object can inherit False without serializing dshd at all.
+    std::vector<std::byte> custom;
+    appendU32(custom, 2U); appendU32(custom, 0U); appendU32(custom, 1U);
+    appendTag(custom, "D000"); appendTag(custom, "D100"); appendU32(custom, 1U);
+    appendTag(custom, "dfil"); appendU32(custom, 3U);
+    appendU32(custom, 0U); appendU32(custom, 0U);
+    appendCString(custom, "Imported.mdx"); appendTag(custom, "D100");
+    objects.applyMapOverrides(custom, std::nullopt);
+    require(objects.find("D100") && !objects.find("D100")->castsShadow &&
+        objects.find("D100")->modelPath == "Imported.mdx",
+        "custom model did not inherit stock False");
+    std::vector<std::byte> overrideData;
+    appendU32(overrideData, 2U); appendU32(overrideData, 1U);
+    appendTag(overrideData, "D100"); appendU32(overrideData, 0U); appendU32(overrideData, 1U);
+    appendTag(overrideData, "dshd"); appendU32(overrideData, 0U);
+    appendU32(overrideData, 0U); appendU32(overrideData, 0U);
+    appendU32(overrideData, 1U); appendTag(overrideData, "D100"); appendU32(overrideData, 0U);
+    objects.applyMapOverrides(overrideData, std::nullopt);
+    require(objects.find("D100")->castsShadow, "explicit True did not override inherited False");
+}
+
+void testShadowExclusions()
+{
+    const auto directory = std::filesystem::temp_directory_path() /
+        ("w3shadow-exclusions-" + std::to_string(std::chrono::high_resolution_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directory(directory);
+    try {
+        const auto map = directory / "first.w3x";
+        require(w3shadow::loadShadowExclusions(map).empty(), "new maps must have no exclusions");
+        const w3shadow::ShadowExclusions selected{"D000", "D001"};
+        w3shadow::saveShadowExclusions(map, selected);
+        require(w3shadow::loadShadowExclusions(map) == selected, "exclusions did not persist");
+        require(w3shadow::loadShadowExclusions(directory / "second.w3x").empty(),
+            "exclusions leaked between maps");
+        w3shadow::saveShadowExclusions(map, {});
+        require(w3shadow::loadShadowExclusions(map).empty(), "cleared exclusions returned on reload");
+        const std::string invalid = "W3SHADOW-EXCLUSIONS 1\nnot-hex!\n";
+        w3shadow::writeBinaryFileAtomic(w3shadow::shadowExclusionsPath(map),
+            {reinterpret_cast<const std::byte*>(invalid.data()), invalid.size()}, true);
+        bool rejected = false;
+        try { static_cast<void>(w3shadow::loadShadowExclusions(map)); }
+        catch (const std::exception&) { rejected = true; }
+        require(rejected, "invalid exclusions silently accepted");
+
+        const w3shadow::MapArchive archive(std::filesystem::path(W3SHADOW_FIXTURE_MAP));
+        const auto placements = w3shadow::parseDOO(archive.read("war3map.doo"));
+        require(static_cast<bool>(placements), placements.error);
+        MemoryAssets assets;
+        w3shadow::ObjectDatabase emptyDatabase;
+        const auto rows = w3shadow::shadowObjectRows(archive, emptyDatabase, w3shadow::DOOLayoutMode::Automatic);
+        std::size_t rowCount = 0;
+        w3shadow::GenerationOptions options;
+        require(options.excludedObjectIds.empty(), "generation excluded objects by default");
+        for (const auto& row : rows) {
+            rowCount += row.placements;
+            options.excludedObjectIds.insert(row.rawcode);
+        }
+        require(rowCount == placements.placements.size(), "exclusion list lost or duplicated placements");
+        options.terrain = false;
+        options.shadowSampleGrid = 1;
+        options.ignoreTransparentTerrain = false;
+        options.honorIgnoreShadowRegions = false;
+        const auto excluded = w3shadow::generateShadowMap(archive, assets, options);
+        const auto live = std::count_if(placements.placements.begin(), placements.placements.end(),
+            [](const auto& placement) { return placement.life != 0U; });
+        require(excluded.stats.excludedPlacements == static_cast<std::size_t>(live) &&
+            excluded.stats.triangles == 0U && excluded.stats.shadowedSamples == 0U &&
+            excluded.stats.unresolvedPlacements == 0U,
+            "excluded objects still required models or contributed geometry/shadows");
+
+        // All fixture types share one model; excluding one must not evict that cached model.
+        std::string profiles;
+        std::set<std::string> definitionIds;
+        for (const auto& placement : placements.placements) {
+            definitionIds.insert(placement.rawcode);
+            definitionIds.insert(placement.skinRawcode);
+        }
+        for (const auto& id : definitionIds) {
+            if (id.size() == 4U && id != std::string(4U, '\0')) {
+                profiles += "[" + id + "]\nfile=Shared.mdx\nshadow=1\n";
+            }
+        }
+        assets.files["Doodads\\DoodadSkins.txt"] = std::vector<std::byte>(
+            reinterpret_cast<const std::byte*>(profiles.data()),
+            reinterpret_cast<const std::byte*>(profiles.data() + profiles.size()));
+        std::vector<std::byte> geoset;
+        appendTag(geoset, "VRTX"); appendU32(geoset, 3U);
+        for (const auto& vertex : std::array<w3shadow::Vec3, 3>{
+            w3shadow::Vec3{0, 0, 128}, {256, 0, 128}, {0, 256, 128}}) {
+            appendF32(geoset, vertex.x); appendF32(geoset, vertex.y); appendF32(geoset, vertex.z);
+        }
+        appendTag(geoset, "NRMS"); appendU32(geoset, 0U);
+        appendTag(geoset, "PTYP"); appendU32(geoset, 0U);
+        appendTag(geoset, "PCNT"); appendU32(geoset, 0U);
+        appendTag(geoset, "PVTX"); appendU32(geoset, 3U);
+        appendU16(geoset, 0U); appendU16(geoset, 1U); appendU16(geoset, 2U);
+        auto& model = assets.files["Shared.mdx"];
+        appendTag(model, "MDLX");
+        appendTag(model, "VERS"); appendU32(model, 4U); appendU32(model, 800U);
+        appendTag(model, "GEOS"); appendU32(model, static_cast<std::uint32_t>(geoset.size() + 4U));
+        appendU32(model, static_cast<std::uint32_t>(geoset.size() + 4U));
+        model.insert(model.end(), geoset.begin(), geoset.end());
+        options.excludedObjectIds.clear();
+        const auto baseline = w3shadow::generateShadowMap(archive, assets, options);
+        require(baseline.stats.resolvedPlacements == static_cast<std::size_t>(live) &&
+            baseline.stats.uniqueModels == 1U, "shared-model fixture did not resolve all placements");
+        require(rows.size() > 1U, "fixture requires multiple object types");
+        options.excludedObjectIds.insert(rows.front().rawcode);
+        const auto partial = w3shadow::generateShadowMap(archive, assets, options);
+        require(partial.stats.uniqueModels == 1U && partial.stats.resolvedPlacements > 0U &&
+            partial.stats.triangles < baseline.stats.triangles &&
+            partial.stats.resolvedPlacements + partial.stats.excludedPlacements == baseline.stats.resolvedPlacements,
+            "excluding one type removed other types sharing its model");
+        options.excludedObjectIds.clear();
+        const auto restored = w3shadow::generateShadowMap(archive, assets, options);
+        require(std::equal(restored.shadow.bytes().begin(), restored.shadow.bytes().end(),
+            baseline.shadow.bytes().begin(), baseline.shadow.bytes().end()),
+            "clearing exclusions changed the original SHD");
+        std::size_t setting = 0;
+        while ((setting = profiles.find("shadow=1", setting)) != std::string::npos) {
+            profiles[setting + 7U] = '0';
+        }
+        assets.files["Doodads\\DoodadSkins.txt"] = std::vector<std::byte>(
+            reinterpret_cast<const std::byte*>(profiles.data()),
+            reinterpret_cast<const std::byte*>(profiles.data() + profiles.size()));
+        const auto disabled = w3shadow::generateShadowMap(archive, assets, options);
+        require(disabled.stats.noShadowPlacements == static_cast<std::size_t>(live) &&
+            disabled.stats.uniqueModels == 0U && disabled.stats.triangles == 0U &&
+            disabled.stats.shadowedSamples == 0U,
+            "empty exclusions allowed stock False objects to load cached models or cast shadows");
+
+        std::filesystem::remove_all(directory);
+    } catch (...) {
+        std::error_code ignored;
+        std::filesystem::remove_all(directory, ignored);
+        throw;
+    }
+}
+
 void testObjectShadowOverride()
 {
     std::vector<std::byte> data;
@@ -666,9 +834,27 @@ void testLegacyWarcraftAssets()
         w3shadow::GenerationOptions options;
         options.shadowSampleGrid = 1U;
         const auto generated = w3shadow::generateShadowMap(legacyMap, generationAssets, options);
-        require(generated.stats.resolvedPlacements == 65U &&
+        require(generated.stats.resolvedPlacements + generated.stats.noShadowPlacements == 65U &&
                 generated.stats.unresolvedPlacements == 0U,
-                "genuine 1.27b map did not resolve every placed-object model");
+                "genuine 1.27b map did not account for every placement after shadow filtering");
+        const auto database = w3shadow::loadMapObjectDatabase(legacyMap, generationAssets);
+        const auto rows = w3shadow::shadowObjectRows(legacyMap, database, options.dooLayoutMode);
+        const auto chosen = std::find_if(rows.begin(), rows.end(), [](const auto& row) {
+            return row.anyEnabled && !row.anyDisabled && !row.unresolved;
+        });
+        require(chosen != rows.end(), "legacy fixture has no eligible exclusion control");
+        options.excludedObjectIds.insert(chosen->rawcode);
+        const auto filtered = w3shadow::generateShadowMap(legacyMap, generationAssets, options);
+        require(filtered.stats.resolvedPlacements + filtered.stats.excludedPlacements ==
+                generated.stats.resolvedPlacements && filtered.stats.excludedPlacements > 0U &&
+                filtered.stats.triangles < generated.stats.triangles &&
+                filtered.stats.noShadowPlacements == generated.stats.noShadowPlacements,
+                "selective exclusion affected unrelated types or re-enabled False objects");
+        options.excludedObjectIds.clear();
+        const auto restored = w3shadow::generateShadowMap(legacyMap, generationAssets, options);
+        require(std::equal(restored.shadow.bytes().begin(), restored.shadow.bytes().end(),
+                generated.shadow.bytes().begin(), generated.shadow.bytes().end()),
+                "clearing exclusions did not restore the original shadow calculation");
     }
 #endif
 }
@@ -905,7 +1091,9 @@ int main()
         testTransparentTerrain();
         testBlpAlphaAndAlphaTestedBvh();
         testGeometryAndFormats();
+        testStockShadowSettings();
         testObjectShadowOverride();
+        testShadowExclusions();
         testInstalledWarcraftAssets();
         testLegacyWarcraftAssets();
         testRegions();

@@ -1,5 +1,6 @@
 #include "gui/App.hpp"
 #include "gui/Resources.h"
+#include "gui/ExclusionsDialog.hpp"
 
 #include "archive/MapArchive.hpp"
 #include "assets/AssetProvider.hpp"
@@ -520,6 +521,7 @@ int App::run(
     if (!smokeTest) loadAssetSettings(true);
     if (startupMap) loadMap(*startupMap);
     if (smokeTest) {
+        smokeTestExclusionsDialog(window_);
         showHelp_ = true;
         updateEditControls();
         if (!createDeviceResources()) {
@@ -1021,6 +1023,10 @@ App::Layout App::calculateLayout() const
         layout.patternCard.right - 142.0F, layout.patternCard.top + 10.0F,
         layout.patternCard.right - 16.0F, layout.patternCard.top + 40.0F);
 
+    layout.exclusions = D2D1::RectF(
+        layout.patternCard.right - 142.0F, layout.patternCard.top + 174.0F,
+        layout.patternCard.right - 16.0F, layout.patternCard.top + 200.0F);
+
     layout.outputCard = D2D1::RectF(margin, contentTop + 466.0F,
                                     margin + leftWidth, contentTop + 562.0F);
     const float modeWidth = (leftWidth - 42.0F) / 2.0F;
@@ -1252,6 +1258,7 @@ App::Target App::hitTest(const float x, const float y) const
             }
         }
         if (contains(layout.advanced, x, y)) return Target::Advanced;
+        if (contains(layout.exclusions, x, y)) return Target::Exclusions;
     }
     if (contains(layout.copyMode, x, y)) return Target::CopyMode;
     if (contains(layout.inPlaceMode, x, y)) return Target::InPlaceMode;
@@ -1418,7 +1425,7 @@ void App::moveFocus(const bool backwards)
     }
     const auto available = [this](const Target target) {
         if (target >= Target::Terrain && target <= Target::ShadowSamples4) return !testMode_;
-        if (target == Target::Advanced) return !testMode_;
+        if (target == Target::Advanced || target == Target::Exclusions) return !testMode_;
         if (target >= Target::PatternBlack && target <= Target::PatternQuadrants) return testMode_;
         return target >= Target::Browse && target <= Target::Help;
     };
@@ -1437,6 +1444,7 @@ void App::moveFocus(const bool backwards)
 void App::activate(const Target target)
 {
     switch (target) {
+    case Target::Exclusions: editExclusions(); break;
     case Target::Browse: chooseMap(); break;
     case Target::Terrain:
         includeTerrain_ = !includeTerrain_;
@@ -1798,7 +1806,9 @@ void App::loadMap(const std::filesystem::path& path)
         const auto parsed = parseW3E(archive.read("war3map.w3e"));
         if (!parsed) throw std::runtime_error(parsed.error);
 
+        auto exclusions = loadShadowExclusions(path);
         mapPath_ = path;
+        excludedObjectIds_ = std::move(exclusions);
         mapInfo_ = parsed.info;
         rebuildPreview();
         logEvent(StatusKind::Neutral, L"Loaded map: " + path.wstring());
@@ -2170,6 +2180,40 @@ Vec3 App::readLightDirection() const
     return direction;
 }
 
+void App::editExclusions()
+{
+    if (!mapPath_) {
+        setStatus(L"Choose a map before editing shadow exclusions.", StatusKind::Warning);
+        return;
+    }
+    try {
+        const MapArchive archive(*mapPath_);
+        CompositeAssetProvider assets;
+        assets.add(std::make_shared<MapAssetProvider>(archive));
+        if (hasUsableAssetSettings(warcraftDirectory_, cascLibrary_)) {
+            if (isLegacyWarcraftDirectory(*warcraftDirectory_)) {
+                auto legacy = std::make_shared<LegacyMpqAssetProvider>(*warcraftDirectory_);
+                if (!legacy->available()) throw std::runtime_error(legacy->error());
+                assets.add(legacy);
+            } else {
+                auto casc = std::make_shared<CascAssetProvider>(*warcraftDirectory_, *cascLibrary_);
+                if (!casc->available()) throw std::runtime_error(casc->error());
+                assets.add(casc);
+            }
+        }
+        const auto objects = loadMapObjectDatabase(archive, assets);
+        for (const auto& warning : objects.warnings()) logEvent(StatusKind::Warning, widen(warning));
+        const auto rows = shadowObjectRows(archive, objects, dooLayoutMode_);
+        if (editShadowExclusions(window_, *mapPath_, rows, excludedObjectIds_)) {
+            calculationDirty_ = true;
+            setStatus(L"Saved map exclusions. Calculate shadows again before saving the map.", StatusKind::Warning);
+        }
+    } catch (const std::exception& error) {
+        showError(L"Edit shadow exclusions", error);
+    }
+    InvalidateRect(window_, nullptr, FALSE);
+}
+
 void App::calculateShadows()
 {
     if (!mapPath_ || !mapInfo_ || !shadowMap_) {
@@ -2231,6 +2275,7 @@ void App::calculateShadows()
         options.honorIgnoreShadowRegions = honorIgnoreRegions_;
         options.ignoreTransparentTerrain = ignoreTransparentTerrain_;
         options.dooLayoutMode = dooLayoutMode_;
+        options.excludedObjectIds = excludedObjectIds_;
         auto generated = generateShadowMap(source, assets, options);
         for (const auto& diagnostic : generated.diagnostics) {
             logEvent(StatusKind::Neutral, widen(diagnostic));
@@ -2357,6 +2402,13 @@ void App::saveShadowMap()
             return;
         }
         MapArchive::replaceShadowInCopy(*mapPath_, *output, warcraftBytes, true);
+        if (!excludedObjectIds_.empty() || std::filesystem::exists(shadowExclusionsPath(*output))) {
+            try { saveShadowExclusions(*output, excludedObjectIds_); }
+            catch (const std::exception& error) {
+                setStatus(L"Map saved, but its exclusion settings could not be copied: " + widen(error.what()), StatusKind::Warning);
+                return;
+            }
+        }
         setStatus(L"Created shadowed map: " + output->filename().wstring(), StatusKind::Success);
     } catch (const std::exception& error) {
         showError(L"Save shadowmap", error);
@@ -2605,6 +2657,8 @@ void App::paint()
             terrainGeometry_ == TerrainGeometryMode::ClassicTriangulated,
             terrainGeometry_ == TerrainGeometryMode::SmoothSubTile};
         drawButton(layout.advanced, L"Tuning...", Target::Advanced, false);
+        drawButton(layout.exclusions, L"Exclusions (" + std::to_wstring(excludedObjectIds_.size()) + L")",
+                   Target::Exclusions, !excludedObjectIds_.empty());
         for (std::size_t index = 0; index < labels.size(); ++index) {
             const auto target = static_cast<Target>(static_cast<int>(Target::Terrain) +
                                                     static_cast<int>(index));

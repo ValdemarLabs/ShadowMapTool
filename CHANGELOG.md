@@ -2,6 +2,14 @@
 
 This changelog records notable ShadowMapTool releases and development changes.
 
+## Unreleased - 21.11.2026
+
+- Fixed stock SLK/skin-profile `shadow=0` values being treated as enabled, including custom doodads inheriting False without an explicit map override. Thanks to HerrDave for finding and reporting the bug.
+- Added a searchable per-map **Exclusions** list for placed doodad/destructible types. It starts empty, preserves Object Editor False settings, supports Apply/Cancel/clear, and saves beside the map without editing object data.
+- Shared exclusion settings between GUI and CLI generation, preserved them with generated map copies, and kept them independent of global presets.
+- Added object-data-disabled/excluded placement diagnostics; malformed object overrides now stop calculation instead of continuing with partial settings.
+- Added inherited-shadow, persistence, shared-model exclusion, restoration, legacy integration, and dialog regression coverage plus a manual diagnostic procedure.
+
 ## [1.3.3] - 8.10.2026
 
 ShadowMapTool 1.3.3 restores reliable shadow calculation for older Warcraft III maps while keeping current-map behavior automatic.
