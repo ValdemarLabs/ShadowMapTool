@@ -62,8 +62,9 @@ bool intersectsOpaqueTriangle(
         const auto w = 1.0F - u - v;
         const auto textureU = triangle.uvA.x * w + triangle.uvB.x * u + triangle.uvC.x * v;
         const auto textureV = triangle.uvA.y * w + triangle.uvB.y * u + triangle.uvC.y * v;
-        // Warcraft's Transparent filter is an alpha test near 0.75.
-        if (triangle.alphaMask->sample(textureU, textureV) < 192U) return false;
+        // Binary shadow cutoff for Transparent and Blend, including sampled opacity.
+        if (static_cast<float>(triangle.alphaMask->sample(textureU, textureV)) *
+            triangle.shadowOpacity < 192.0F) return false;
     }
     return true;
 }

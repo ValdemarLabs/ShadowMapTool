@@ -71,6 +71,7 @@ struct Triangle {
     Vec2 uvC;
     std::uint32_t materialId = std::numeric_limits<std::uint32_t>::max();
     std::uint32_t shadowTextureIndex = std::numeric_limits<std::uint32_t>::max();
+    float shadowOpacity = 1.0F;
     bool alphaTested = false;
     std::shared_ptr<const AlphaMask> alphaMask;
 };

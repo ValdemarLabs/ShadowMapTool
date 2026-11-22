@@ -454,6 +454,209 @@ void testGeometryAndFormats()
             "additive MDX material geometry was not excluded from static shadows");
 }
 
+// Small self-contained models keep visibility regressions independent of game assets.
+std::vector<std::byte> visibilityTrack(const std::string_view tag,
+    const std::vector<std::pair<std::uint32_t, float>>& keys,
+    const std::uint32_t interpolation = 0U, const std::uint32_t globalSequence = 0xFFFFFFFFU)
+{
+    std::vector<std::byte> bytes;
+    appendTag(bytes, tag.data()); appendU32(bytes, static_cast<std::uint32_t>(keys.size()));
+    appendU32(bytes, interpolation); appendU32(bytes, globalSequence);
+    for (const auto& [frame, value] : keys) {
+        appendU32(bytes, frame); appendF32(bytes, value);
+        if (interpolation > 1U) {
+            appendF32(bytes, value); appendF32(bytes, value);
+        }
+    }
+    return bytes;
+}
+
+std::vector<std::byte> visibilityModel(const std::uint32_t filterMode,
+    const float materialAlpha, const float geosetAlpha,
+    const std::vector<std::byte>& geosetTrack = {},
+    const std::vector<std::byte>& materialTrack = {}, const bool hasStand = true,
+    const std::uint32_t version = 800U)
+{
+    std::vector<std::byte> mdx;
+    appendTag(mdx, "MDLX");
+    const auto chunk = [&](const std::string_view tag, const std::vector<std::byte>& data) {
+        appendTag(mdx, tag.data()); appendU32(mdx, static_cast<std::uint32_t>(data.size()));
+        mdx.insert(mdx.end(), data.begin(), data.end());
+    };
+    std::vector<std::byte> versions;
+    appendU32(versions, version); chunk("VERS", versions);
+    std::vector<std::byte> sequences;
+    const auto sequence = [&](const std::string& name, std::uint32_t start, std::uint32_t end) {
+        const auto offset = sequences.size();
+        sequences.resize(offset + 80U, std::byte{0});
+        for (std::size_t i = 0; i < name.size(); ++i) sequences[offset + i] = std::byte(name[i]);
+        appendU32(sequences, start); appendU32(sequences, end);
+        sequences.resize(sequences.size() + 44U, std::byte{0});
+    };
+    // Portrait comes first intentionally: file order must not choose the display pose.
+    sequence("Portrait", 0U, 100U);
+    if (hasStand) {
+        sequence("Stand Work", 300U, 500U);
+        sequence("Stand", 1000U, 2000U);
+        sequence("Stand Alternate", 2500U, 3000U);
+    }
+    chunk("SEQS", sequences);
+    std::vector<std::byte> globals;
+    appendU32(globals, 100U); chunk("GLBS", globals);
+
+    std::vector<std::byte> material;
+    std::vector<std::byte> extension(version > 900U ? 24U : (version > 800U ? 4U : 0U), std::byte{0});
+    if (version >= 1100U) {
+        appendU32(extension, 0U); // SD shader
+        appendU32(extension, 2U); // Deliberately put a non-diffuse slot first.
+        appendU32(extension, 0U); appendU32(extension, 1U);
+        appendTag(extension, "KMTF"); appendU32(extension, 1U);
+        appendU32(extension, 0U); appendU32(extension, 0xFFFFFFFFU);
+        appendU32(extension, 1000U); appendU32(extension, 0U);
+        appendU32(extension, 1U); appendU32(extension, 0U);
+    }
+    const auto extensionSize = static_cast<std::uint32_t>(extension.size());
+    const auto shaderSize = version >= 900U && version < 1100U ? 80U : 0U;
+    appendU32(material, 48U + extensionSize + shaderSize + static_cast<std::uint32_t>(materialTrack.size()));
+    appendU32(material, 0U); appendU32(material, 0U);
+    material.resize(material.size() + shaderSize, std::byte{0});
+    appendTag(material, "LAYS"); appendU32(material, 1U);
+    appendU32(material, 28U + extensionSize + static_cast<std::uint32_t>(materialTrack.size()));
+    appendU32(material, filterMode); appendU32(material, 0U); appendU32(material, 0U);
+    appendU32(material, 0xFFFFFFFFU); appendU32(material, 0U); appendF32(material, materialAlpha);
+    material.insert(material.end(), extension.begin(), extension.end());
+    material.insert(material.end(), materialTrack.begin(), materialTrack.end());
+    chunk("MTLS", material);
+    std::vector<std::byte> textures(268U, std::byte{0});
+    const std::string path = "Test.blp";
+    for (std::size_t i = 0; i < path.size(); ++i) textures[4U + i] = std::byte(path[i]);
+    if (version >= 1100U) {
+        // The obsolete header texture ID points to glow, while diffuse slot 0
+        // points to the real texture. Reading the placeholder would hide the prop.
+        std::vector<std::byte> glow(268U, std::byte{0});
+        writeU32(glow, 0U, 2U);
+        textures.insert(textures.begin(), glow.begin(), glow.end());
+    }
+    chunk("TEXS", textures);
+
+    std::vector<std::byte> geosets;
+    for (std::uint32_t index = 0; index < 2U; ++index) {
+        std::vector<std::byte> geoset;
+        appendU32(geoset, 0U);
+        appendTag(geoset, "VRTX"); appendU32(geoset, 3U);
+        const auto x = static_cast<float>(index) * 2.0F;
+        for (const auto vertex : std::array<w3shadow::Vec3, 3>{{{x, 0, 0}, {x + 1, 0, 0}, {x, 1, 0}}}) {
+            appendF32(geoset, vertex.x); appendF32(geoset, vertex.y); appendF32(geoset, vertex.z);
+        }
+        appendTag(geoset, "NRMS"); appendU32(geoset, 0U);
+        appendTag(geoset, "PTYP"); appendU32(geoset, 0U);
+        appendTag(geoset, "PCNT"); appendU32(geoset, 0U);
+        appendTag(geoset, "PVTX"); appendU32(geoset, 3U);
+        appendU16(geoset, 0U); appendU16(geoset, 1U); appendU16(geoset, 2U);
+        appendTag(geoset, "GNDX"); appendU32(geoset, 0U);
+        appendTag(geoset, "MTGC"); appendU32(geoset, 0U);
+        appendTag(geoset, "MATS"); appendU32(geoset, 0U);
+        appendU32(geoset, 0U);
+        appendTag(geoset, "UVAS"); appendU32(geoset, 1U);
+        appendTag(geoset, "UVBS"); appendU32(geoset, 3U);
+        for (const auto uv : std::array<w3shadow::Vec2, 3>{{{0, 0}, {1, 0}, {0, 1}}}) {
+            appendF32(geoset, uv.x); appendF32(geoset, uv.y);
+        }
+        writeU32(geoset, 0U, static_cast<std::uint32_t>(geoset.size()));
+        geosets.insert(geosets.end(), geoset.begin(), geoset.end());
+    }
+    // GEOA before GEOS must also work.
+    std::vector<std::byte> animation;
+    appendU32(animation, 28U + static_cast<std::uint32_t>(geosetTrack.size()));
+    appendF32(animation, geosetAlpha); appendU32(animation, 0U);
+    for (int i = 0; i < 3; ++i) appendF32(animation, 1.0F);
+    appendU32(animation, 1U);
+    animation.insert(animation.end(), geosetTrack.begin(), geosetTrack.end());
+    chunk("GEOA", animation); chunk("GEOS", geosets);
+    return mdx;
+}
+
+void testModelVisibility()
+{
+    const auto parse = [](const std::vector<std::byte>& bytes) {
+        auto result = w3shadow::parseMDX(bytes);
+        require(static_cast<bool>(result), result.error);
+        return result;
+    };
+    const auto portrait = visibilityTrack("KGAO", {{0U, 1.0F}, {100U, 1.0F},
+                                                 {1000U, 0.0F}, {2000U, 0.0F}});
+    auto result = parse(visibilityModel(0U, 1.0F, 1.0F, portrait));
+    require(result.model.triangles.size() == 1U && result.model.triangles[0].a.x == 0.0F,
+            "portrait-only geoset casts a shadow during Stand");
+    w3shadow::Bvh bvh(result.model.triangles);
+    require(bvh.intersects({0.2F, 0.2F, 1.0F}, {0, 0, -1}, 0, 2) &&
+            !bvh.intersects({2.2F, 0.2F, 1.0F}, {0, 0, -1}, 0, 2),
+            "Stand mesh did not preserve the visible prop and remove its portrait background");
+    require(parse(visibilityModel(0U, 1.0F, 0.0F)).model.triangles.size() == 1U,
+            "static geoset alpha zero was ignored");
+    const auto visible = visibilityTrack("KGAO", {{1000U, 1.0F}, {2000U, 1.0F}});
+    require(parse(visibilityModel(0U, 1.0F, 0.0F, visible)).model.triangles.size() == 2U,
+            "animated visible geoset was removed using its static alpha");
+    require(parse(visibilityModel(0U, 1.0F, 1.0F, portrait, {}, false)).model.triangles.size() == 2U,
+            "model without Stand incorrectly selected Portrait instead of static visibility");
+    const auto portraitOnlyKeys = visibilityTrack("KGAO", {{0U, 0.0F}, {100U, 0.0F}});
+    require(parse(visibilityModel(0U, 1.0F, 1.0F, portraitOnlyKeys)).model.triangles.size() == 2U,
+            "visibility keys outside Stand leaked into the selected sequence");
+    const auto globalHidden = visibilityTrack("KGAO", {{0U, 0.0F}, {100U, 0.0F}}, 0U, 0U);
+    require(parse(visibilityModel(0U, 1.0F, 1.0F, globalHidden)).model.triangles.size() == 1U,
+            "global visibility was ignored");
+    for (const auto interpolation : {0U, 1U, 2U, 3U}) {
+        // At frame 1000, the wrap spans 900..1100. Non-step modes fall below the cutoff.
+        const auto seam = visibilityTrack("KMTA", {{1100U, 0.0F}, {1900U, 1.0F}}, interpolation);
+        const auto parsed = parse(visibilityModel(2U, 1.0F, 1.0F, {}, seam));
+        require(parsed.model.triangles.size() == (interpolation == 0U ? 2U : 0U),
+                "alpha interpolation across the Stand interval boundary is wrong");
+    }
+    for (const auto version : {800U, 900U, 1000U, 1100U, 1200U, 1800U}) {
+        const auto alpha = visibilityTrack("KMTA", {{0U, 0.0F}, {1000U, 1.0F}, {2000U, 1.0F}});
+        require(parse(visibilityModel(2U, 0.0F, 1.0F, {}, alpha, true, version)).model.triangles.size() == 2U,
+                "visible Blend material was removed by static alpha or filter mode");
+    }
+    require(parse(visibilityModel(2U, 0.5F, 1.0F)).model.triangles.empty(),
+            "faint Blend effect became an opaque shadow caster");
+    for (const auto filter : {3U, 4U, 5U, 6U}) {
+        require(parse(visibilityModel(filter, 1.0F, 1.0F)).model.triangles.empty(),
+                "visual-effect filter became a shadow caster");
+    }
+    result = parse(visibilityModel(2U, 1.0F, 1.0F));
+    require(result.model.alphaTestedTriangles == 2U, "Blend texture alpha was not enabled");
+    auto mask = std::make_shared<w3shadow::AlphaMask>();
+    mask->width = 2U; mask->height = 1U; mask->alpha = {0U, 255U};
+    for (auto& triangle : result.model.triangles) triangle.alphaMask = mask;
+    bvh.rebuild(result.model.triangles);
+    require(!bvh.intersects({0.1F, 0.1F, 1.0F}, {0, 0, -1}, 0, 2) &&
+            bvh.intersects({0.7F, 0.1F, 1.0F}, {0, 0, -1}, 0, 2),
+            "Blend cutout transparency did not reach shadow ray tests");
+    result = parse(visibilityModel(2U, 0.8F, 1.0F));
+    mask->alpha = {200U, 255U};
+    for (auto& triangle : result.model.triangles) triangle.alphaMask = mask;
+    bvh.rebuild(result.model.triangles);
+    require(!bvh.intersects({0.1F, 0.1F, 1.0F}, {0, 0, -1}, 0, 2) &&
+            bvh.intersects({0.7F, 0.1F, 1.0F}, {0, 0, -1}, 0, 2),
+            "Blend ray tests ignored the sampled material opacity");
+    const auto hiddenMaterial = visibilityTrack("KMTA", {{1000U, 0.0F}, {2000U, 0.0F}});
+    require(parse(visibilityModel(0U, 1.0F, 1.0F, {}, hiddenMaterial)).model.triangles.empty(),
+            "animated invisible material still casts a shadow");
+    const auto invalidGlobal = visibilityTrack("KGAO", {{0U, 1.0F}}, 0U, 5U);
+    require(!w3shadow::parseMDX(visibilityModel(0U, 1.0F, 1.0F, invalidGlobal)),
+            "out-of-range global sequence was accepted");
+    const auto reversed = visibilityTrack("KGAO", {{2000U, 1.0F}, {1000U, 0.0F}});
+    require(!w3shadow::parseMDX(visibilityModel(0U, 1.0F, 1.0F, reversed)),
+            "out-of-order visibility keys were accepted");
+    auto truncated = portrait;
+    truncated.pop_back();
+    require(!w3shadow::parseMDX(visibilityModel(0U, 1.0F, 1.0F, truncated)),
+            "truncated visibility track was accepted");
+    const auto invalidMode = visibilityTrack("KGAO", {{1000U, 0.0F}}, 4U);
+    require(!w3shadow::parseMDX(visibilityModel(0U, 1.0F, 1.0F, invalidMode)),
+            "invalid visibility interpolation was accepted");
+}
+
 void testStockShadowSettings()
 {
     const auto bytes = [](const std::string& text) {
@@ -1091,6 +1294,7 @@ int main()
         testTransparentTerrain();
         testBlpAlphaAndAlphaTestedBvh();
         testGeometryAndFormats();
+        testModelVisibility();
         testStockShadowSettings();
         testObjectShadowOverride();
         testShadowExclusions();

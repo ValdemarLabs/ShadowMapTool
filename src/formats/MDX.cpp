@@ -16,10 +16,171 @@ constexpr std::uint32_t maximumVertices = 10000000U;
 constexpr std::uint32_t maximumIndices = 30000000U;
 constexpr std::uint32_t noIndex = std::numeric_limits<std::uint32_t>::max();
 
+struct AlphaKey {
+    std::uint32_t frame = 0;
+    float value = 1.0F;
+    float inTangent = 0.0F;
+    float outTangent = 0.0F;
+};
+
+struct AlphaTrack {
+    std::uint32_t interpolation = 0;
+    std::uint32_t globalSequence = noIndex;
+    std::vector<AlphaKey> keys;
+};
+
+struct Sequence {
+    std::string name;
+    std::uint32_t start = 0;
+    std::uint32_t end = 0;
+};
+
+struct GeosetVisibility {
+    std::uint32_t geosetId = noIndex;
+    float alpha = 1.0F;
+    AlphaTrack track;
+};
+
+// Returns only the requested alpha track, but validates/skips the other tracks
+// structurally so tag-like bytes inside key values cannot be mistaken for tags.
+AlphaTrack parseAlphaTracks(BinaryReader& reader, const std::string_view alphaTag)
+{
+    AlphaTrack result;
+    while (!reader.empty()) {
+        const auto tag = reader.readTag("animation tag");
+        std::uint32_t components = 1U;
+        if (tag == "KGAC" || tag == "KFC3") components = 3U;
+        else if (tag != "KGAO" && tag != "KMTA" && tag != "KMTF" &&
+                 tag != "KMTE" && tag != "KFCA" && tag != "KFTC") {
+            throw std::runtime_error("MDX parse error: unknown visibility/material track " + tag);
+        }
+        const auto count = reader.readU32("animation key count");
+        AlphaTrack track;
+        track.interpolation = reader.readU32("interpolation type");
+        track.globalSequence = reader.readU32("global sequence ID");
+        if (track.interpolation > 3U) {
+            throw std::runtime_error("MDX parse error: invalid animation interpolation");
+        }
+        const auto keySize = 4U + components * 4U * (track.interpolation > 1U ? 3U : 1U);
+        if (count > 1000000U || static_cast<std::uint64_t>(count) * keySize > reader.remaining()) {
+            throw std::runtime_error("MDX parse error: invalid animation key count");
+        }
+        if (tag != alphaTag) {
+            reader.skip(static_cast<std::size_t>(count) * keySize, "animation keys");
+            continue;
+        }
+        track.keys.reserve(count);
+        for (std::uint32_t index = 0; index < count; ++index) {
+            AlphaKey key;
+            key.frame = reader.readU32("key frame");
+            key.value = reader.readF32("key alpha");
+            if (track.interpolation > 1U) {
+                key.inTangent = reader.readF32("alpha in tangent");
+                key.outTangent = reader.readF32("alpha out tangent");
+            }
+            if (!std::isfinite(key.value) || !std::isfinite(key.inTangent) ||
+                !std::isfinite(key.outTangent) ||
+                (!track.keys.empty() && key.frame < track.keys.back().frame)) {
+                throw std::runtime_error("MDX parse error: invalid alpha animation key");
+            }
+            track.keys.push_back(key);
+        }
+        result = std::move(track);
+    }
+    return result;
+}
+
+float sampleAlpha(const AlphaTrack& track, const float fallback,
+                  const std::optional<Sequence>& stand, const std::vector<std::uint32_t>& globals)
+{
+    if (track.keys.empty()) return fallback;
+    std::uint32_t start = 0U;
+    std::uint32_t end = 0U;
+    if (track.globalSequence != noIndex) {
+        if (track.globalSequence >= globals.size()) {
+            throw std::runtime_error("MDX parse error: invalid alpha global sequence ID");
+        }
+        end = globals[track.globalSequence];
+    } else if (stand) {
+        start = stand->start;
+        end = stand->end;
+    } else {
+        return fallback;
+    }
+    const auto first = std::lower_bound(track.keys.begin(), track.keys.end(), start,
+        [](const AlphaKey& key, const std::uint32_t frame) { return key.frame < frame; });
+    const auto after = std::upper_bound(first, track.keys.end(), end,
+        [](const std::uint32_t frame, const AlphaKey& key) { return frame < key.frame; });
+    // An animated alpha with no keys in this sequence has the alpha default (1),
+    // not the values from a different sequence such as Portrait or Death.
+    if (first == after) return 1.0F;
+    const auto next = std::upper_bound(first, after, start,
+        [](const std::uint32_t frame, const AlphaKey& key) { return frame < key.frame; });
+    if (next != first) return (next - 1)->value; // Exact start key (last wins on duplicates).
+    if (after - first == 1 || start == end) return first->value;
+
+    // At the interval start, interpolate across the loop seam when no start key
+    // exists. Only keys inside the chosen interval take part.
+    const auto& left = *(after - 1);
+    const auto& right = *first;
+    if (track.interpolation == 0U) return left.value;
+    const auto leftTime = static_cast<double>(left.frame) - (end - start);
+    const auto span = static_cast<double>(right.frame) - leftTime;
+    if (span <= 0.0) return right.value;
+    const auto t = static_cast<float>((start - leftTime) / span);
+    const auto u = 1.0F - t;
+    if (track.interpolation == 1U) return left.value * u + right.value * t;
+    if (track.interpolation == 2U) {
+        const auto t2 = t * t;
+        const auto t3 = t2 * t;
+        return (2 * t3 - 3 * t2 + 1) * left.value + (t3 - 2 * t2 + t) * left.outTangent +
+               (-2 * t3 + 3 * t2) * right.value + (t3 - t2) * right.inTangent;
+    }
+    return u * u * u * left.value + 3 * u * u * t * left.outTangent +
+           3 * u * t * t * right.inTangent + t * t * t * right.value;
+}
+
+void parseSequences(BinaryReader& chunk, std::optional<Sequence>& stand)
+{
+    while (!chunk.empty()) {
+        auto record = chunk.subReader(132U, "sequence");
+        const auto nameBytes = record.readBytes(80U, "sequence name");
+        const auto terminator = std::find(nameBytes.begin(), nameBytes.end(), std::byte{0});
+        Sequence sequence;
+        sequence.name.assign(reinterpret_cast<const char*>(nameBytes.data()),
+                             static_cast<std::size_t>(terminator - nameBytes.begin()));
+        auto name = sequence.name;
+        for (auto& c : name) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + ('a' - 'A'));
+        sequence.start = record.readU32("sequence start");
+        sequence.end = record.readU32("sequence end");
+        if (sequence.end < sequence.start) throw std::runtime_error("MDX parse error: reversed sequence interval");
+        const auto isStand = name == "stand" || name.starts_with("stand ") || name.starts_with("stand-");
+        if (isStand && (!stand || name == "stand")) stand = std::move(sequence);
+    }
+}
+
+void parseGeosetVisibility(BinaryReader& chunk, std::vector<GeosetVisibility>& animations)
+{
+    while (!chunk.empty()) {
+        const auto size = chunk.readU32("geoset animation size");
+        if (size < 28U || size - 4U > chunk.remaining()) {
+            throw std::runtime_error("MDX parse error: invalid geoset animation size");
+        }
+        auto record = chunk.subReader(size - 4U, "geoset animation");
+        GeosetVisibility animation;
+        animation.alpha = record.readF32("geoset alpha");
+        record.skip(16U, "geoset animation flags and color");
+        animation.geosetId = record.readU32("animated geoset ID");
+        animation.track = parseAlphaTracks(record, "KGAO");
+        animations.push_back(std::move(animation));
+    }
+}
+
 struct MaterialLayer {
     std::uint32_t filterMode = 0;
     std::uint32_t textureIndex = noIndex;
     float alpha = 1.0F;
+    AlphaTrack track;
 };
 
 using Material = std::vector<MaterialLayer>;
@@ -61,7 +222,7 @@ void parseTextures(BinaryReader& chunk, MDXModel& model)
     }
 }
 
-void parseMaterials(BinaryReader& chunk, std::vector<Material>& materials)
+void parseMaterials(BinaryReader& chunk, std::vector<Material>& materials, const std::uint32_t version)
 {
     while (!chunk.empty()) {
         const auto inclusiveSize = chunk.readU32("material size");
@@ -89,14 +250,47 @@ void parseMaterials(BinaryReader& chunk, std::vector<Material>& materials)
                 static_cast<void>(layer.readU32("texture animation ID"));
                 static_cast<void>(layer.readU32("texture coordinate ID"));
                 parsed.alpha = layer.readF32("static alpha");
-                material.push_back(parsed);
+                if (version <= 1800U) {
+                    if (version > 800U) layer.skip(4U, "emissive gain");
+                    if (version > 900U) layer.skip(20U, "fresnel fields");
+                    if (version >= 1100U) {
+                        static_cast<void>(layer.readU32("shader type"));
+                        const auto textureCount = layer.readU32("subtexture count");
+                        if (textureCount > 100000U ||
+                            static_cast<std::uint64_t>(textureCount) * 8U > layer.remaining()) {
+                            throw std::runtime_error("MDX parse error: invalid subtexture count");
+                        }
+                        // Modern files keep a placeholder in the old texture ID
+                        // field. Slot zero supplies the actual diffuse/alpha texture.
+                        parsed.textureIndex = noIndex;
+                        for (std::uint32_t texture = 0; texture < textureCount; ++texture) {
+                            const auto textureId = layer.readU32("subtexture ID");
+                            const auto slot = layer.readU32("subtexture slot");
+                            if (slot == 0U) parsed.textureIndex = textureId;
+                            auto probe = layer;
+                            if (probe.remaining() >= 4U && probe.readTag("optional texture track") == "KMTF") {
+                                const auto count = probe.readU32("texture key count");
+                                const auto mode = probe.readU32("texture interpolation");
+                                static_cast<void>(probe.readU32("texture global sequence"));
+                                if (count > 1000000U || mode > 3U) {
+                                    throw std::runtime_error("MDX parse error: invalid texture animation track");
+                                }
+                                const auto keySize = 4U + 4U * (mode > 1U ? 3U : 1U);
+                                layer.skip(16U + static_cast<std::size_t>(count) * keySize, "texture animation");
+                            }
+                        }
+                    }
+                    parsed.track = parseAlphaTracks(layer, "KMTA");
+                }
+                material.push_back(std::move(parsed));
             }
         }
         materials.push_back(std::move(material));
     }
 }
 
-void parseGeosets(BinaryReader& chunk, MDXModel& model)
+void parseGeosets(BinaryReader& chunk, MDXModel& model,
+                  std::vector<std::pair<std::size_t, std::size_t>>& ranges)
 {
     while (!chunk.empty()) {
         const auto inclusiveSize = chunk.readU32("geoset size");
@@ -190,6 +384,7 @@ void parseGeosets(BinaryReader& chunk, MDXModel& model)
             }
         }
 
+        const auto firstTriangle = model.triangles.size();
         for (std::size_t index = 0; index + 2U < indices.size(); index += 3U) {
             const auto a = indices[index];
             const auto b = indices[index + 1U];
@@ -207,6 +402,7 @@ void parseGeosets(BinaryReader& chunk, MDXModel& model)
             model.triangles.push_back(std::move(triangle));
             ++model.sourceTriangles;
         }
+        ranges.emplace_back(firstTriangle, model.triangles.size());
     }
 }
 
@@ -220,9 +416,14 @@ void applyMaterialFiltering(MDXModel& model, const std::vector<Material>& materi
 {
     auto output = model.triangles.begin();
     for (auto& triangle : model.triangles) {
+        if (!std::isfinite(triangle.shadowOpacity) || triangle.shadowOpacity <= 0.001F) {
+            ++model.visibilityFilteredTriangles;
+            continue;
+        }
         bool castsShadow = true;
         bool alphaTested = false;
         std::uint32_t textureIndex = noIndex;
+        float opacity = 1.0F;
         if (triangle.materialId < materials.size() && !materials[triangle.materialId].empty()) {
             castsShadow = false;
             for (const auto& layer : materials[triangle.materialId]) {
@@ -234,20 +435,24 @@ void applyMaterialFiltering(MDXModel& model, const std::vector<Material>& materi
                     textureIndex = noIndex;
                     break;
                 }
-                if (layer.filterMode == 1U && !castsShadow) {
+                const auto effectiveAlpha = triangle.shadowOpacity * layer.alpha;
+                if ((layer.filterMode == 1U || layer.filterMode == 2U) && !castsShadow &&
+                    effectiveAlpha >= 192.0F / 255.0F) {
                     castsShadow = true;
                     alphaTested = layer.textureIndex < model.textures.size() &&
                                   !model.textures[layer.textureIndex].path.empty();
                     textureIndex = layer.textureIndex;
+                    opacity = std::clamp(effectiveAlpha, 0.0F, 1.0F);
                 }
-                // Blend, additive, add-alpha and modulate layers are visual effects
-                // and do not provide solid static-shadow geometry.
+                // Blend can be an opaque prop surface with cutout texels. Use the
+                // same binary cutoff as Transparent; additive/modulate stay excluded.
             }
         }
         if (!castsShadow) {
             ++model.materialFilteredTriangles;
             continue;
         }
+        triangle.shadowOpacity = opacity;
         triangle.alphaTested = alphaTested;
         triangle.shadowTextureIndex = alphaTested ? textureIndex : noIndex;
         if (alphaTested) ++model.alphaTestedTriangles;
@@ -265,6 +470,11 @@ MDXParseResult parseImpl(const std::span<const std::byte> bytes)
     }
     MDXParseResult result;
     std::vector<Material> materials;
+    std::vector<std::span<const std::byte>> materialChunks;
+    std::vector<std::pair<std::size_t, std::size_t>> geosetRanges;
+    std::vector<GeosetVisibility> visibility;
+    std::vector<std::uint32_t> globals;
+    std::optional<Sequence> stand;
     while (!reader.empty()) {
         const auto tag = reader.readTag("chunk tag");
         const auto size = reader.readU32("chunk size");
@@ -275,17 +485,51 @@ MDXParseResult parseImpl(const std::span<const std::byte> bytes)
         } else if (tag == "TEXS") {
             parseTextures(chunk, result.model);
         } else if (tag == "MTLS") {
-            parseMaterials(chunk, materials);
+            materialChunks.push_back(chunk.readBytes(chunk.remaining(), "materials"));
         } else if (tag == "GEOS") {
-            parseGeosets(chunk, result.model);
+            parseGeosets(chunk, result.model, geosetRanges);
+        } else if (tag == "SEQS") {
+            parseSequences(chunk, stand);
+        } else if (tag == "GLBS") {
+            while (!chunk.empty()) globals.push_back(chunk.readU32("global sequence duration"));
+        } else if (tag == "GEOA") {
+            parseGeosetVisibility(chunk, visibility);
+        }
+    }
+    for (const auto materialBytes : materialChunks) {
+        BinaryReader chunk(materialBytes, "MDX materials");
+        parseMaterials(chunk, materials, result.model.version);
+    }
+    if (!materials.empty() && result.model.version > 1800U) {
+        result.warnings.emplace_back("animated material visibility is unsupported for MDX version " +
+                                     std::to_string(result.model.version) + "; using static material alpha");
+    }
+    for (auto& material : materials) {
+        for (auto& layer : material) layer.alpha = sampleAlpha(layer.track, layer.alpha, stand, globals);
+    }
+    for (const auto& animation : visibility) {
+        if (animation.geosetId == noIndex) continue;
+        if (animation.geosetId >= geosetRanges.size()) {
+            throw std::runtime_error("MDX parse error: animated geoset ID exceeds geoset count");
+        }
+        const auto alpha = sampleAlpha(animation.track, animation.alpha, stand, globals);
+        const auto [first, after] = geosetRanges[animation.geosetId];
+        for (auto index = first; index < after; ++index) {
+            result.model.triangles[index].shadowOpacity = std::clamp(alpha, 0.0F, 1.0F);
         }
     }
     applyMaterialFiltering(result.model, materials);
+    if (result.model.visibilityFilteredTriangles != 0U) {
+        const auto sample = stand ? "start of " + stand->name + " (frame " + std::to_string(stand->start) + ")"
+                                  : "static/global visibility (no Stand sequence)";
+        result.warnings.push_back("visibility excluded " + std::to_string(result.model.visibilityFilteredTriangles) +
+                                  " of " + std::to_string(result.model.sourceTriangles) + " triangles at " + sample);
+    }
     if (result.model.triangles.empty()) {
         if (result.model.sourceTriangles == 0U) {
             result.warnings.emplace_back("model contains no triangle geosets");
         } else {
-            result.warnings.emplace_back("all model triangles were excluded by non-shadow materials");
+            result.warnings.emplace_back("all model triangles were excluded by visibility or non-shadow materials");
         }
     }
     return result;

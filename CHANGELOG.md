@@ -2,6 +2,13 @@
 
 This changelog records notable ShadowMapTool releases and development changes.
 
+## [1.3.5] - 22.11.2026
+
+- Fixed ignored geoset/material alpha animations: static shadows now sample visibility at the start of Stand, excluding geometry visible only in Portrait and retaining surfaces animated visible in Stand. Thanks to HerrDave for reporting invisible portrait-background shadows and missing prop shadows.
+- Restored opaque portions of Blend materials as shadow casters, with texture/opacity cutouts; additive, add-alpha, modulate and team-glow effects remain excluded.
+- Fixed diffuse texture selection for modern MDX subtexture slots and added version-aware material animation parsing through MDX 1800.
+- Added synthetic model/ray regressions and a focused reporter retest procedure. HerrDave's actual models/map were unavailable, so confirmation of his specific assets remains pending.
+
 ## [1.3.4] - 21.11.2026
 
 - Fixed stock SLK/skin-profile `shadow=0` values being treated as enabled, including custom doodads inheriting False without an explicit map override. Thanks to HerrDave for finding and reporting the bug.

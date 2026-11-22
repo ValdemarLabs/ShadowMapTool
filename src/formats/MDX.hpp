@@ -20,6 +20,7 @@ struct MDXModel {
     std::vector<Triangle> triangles;
     std::vector<MDXTexture> textures;
     std::size_t sourceTriangles = 0;
+    std::size_t visibilityFilteredTriangles = 0;
     std::size_t materialFilteredTriangles = 0;
     std::size_t alphaTestedTriangles = 0;
 };

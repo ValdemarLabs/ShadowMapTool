@@ -12,7 +12,7 @@ This is a reproduced code/data defect, not confirmation of the original reporter
 
 The generator resolves the placed skin first, falling back to the placed object's rawcode. Regular map overrides are applied before map skin overrides. The resolved `castsShadow` gate runs before model loading and model-cache lookup. A correctly resolved False therefore cannot be overridden by an MDX material or texture.
 
-For eligible casters, missing/unsupported alpha textures can make geometry cast opaque shadows. Bind-pose geometry, animated visibility, large enclosing geometry, and shared/imported model paths can also explain an incorrect shape. Those issues do not bypass False. Other potential explanations include a different placed skin/type, an older tool build, a different saved map, an existing SHD preview mistaken for a new calculation, another object's shadow, or a dark surface built into the model itself. Malformed object overrides now stop generation rather than continuing with potentially incorrect defaults.
+For eligible casters, missing/unsupported alpha textures can make geometry cast opaque shadows. Bind-pose geometry, bone-driven visibility, large enclosing geometry, and shared/imported model paths can also explain an incorrect shape. Geoset/material alpha visibility is sampled at the start of Stand in version 1.3.5 described below. Those issues do not bypass False. Other potential explanations include a different placed skin/type, an older tool build, a different saved map, an existing SHD preview mistaken for a new calculation, another object's shadow, or a dark surface built into the model itself. Malformed object overrides now stop generation rather than continuing with potentially incorrect defaults.
 
 ## Reliable World Editor test
 
@@ -40,3 +40,33 @@ Prepare the map and all Object Editor edits manually in World Editor. Use a smal
 ## Automated verification
 
 The tests cover stock numeric False/True in SLK and skin profiles, empty/underscore and named shadow textures, a custom imported-model object inheriting False, explicit True/False overrides, per-map save/load and clearing, malformed sidecar rejection, complete and selective caster exclusion, shared-model cache independence, and byte-identical SHD restoration after clearing exclusions. The legacy installed-asset integration test checks eligible plus disabled placement counts. The GUI smoke test exercises checkbox notifications, search, and Cancel. Full in-game confirmation of the reporter's model remains manual.
+
+## Portrait backgrounds and missing prop shadows - 22 November 2026
+
+HerrDave reports invisible built-in portrait backgrounds casting shadows (Fruit Stands), and missing shadows on walls, towers, tents and stakes. His screenshot shows both SD and HD shadow flags enabled for the Desert Wall doodad. The diagonal gate shadow is from a separate unit hidden with Ctrl+U, not from the arch doodads; the chicken is a destructible. Placed units are not inputs to this tool's doodad/destructible geometry pass. Keep those categories separate when comparing results.
+
+The actual map and affected model files were unavailable, and the tested tool version is unconfirmed. The following defects were reproduced with synthetic models; they are candidate explanations for the report, not a verified diagnosis of those particular imports:
+
+- The parser ignored GEOA static alpha and KGAO visibility tracks. A background hidden during Stand but visible during Portrait consequently remained in caster geometry.
+- It used only static material alpha and rejected every Blend layer. A surface with static alpha zero and visible KMTA keys, or an opaque wall using Blend, could therefore lose all its shadow geometry.
+- It read the legacy texture ID placeholder in modern layers instead of the diffuse subtexture slot. This could select an unrelated texture or team glow and incorrectly mask or remove the surface. The installed Warcraft III 3.0 Barn model confirmed that the placeholder and actual diffuse index can differ.
+
+Version 1.3.5 selects exact Stand preferentially, otherwise the first Stand variant, and samples its starting frame. It uses static non-global visibility if there is no Stand; it never selects Portrait as the display sequence. Global tracks use time zero. Keys outside the chosen interval are ignored, and step/linear/Hermite/Bezier interpolation is supported at the interval boundary. Geoset filtering reports the model path, removed triangle count and sampled sequence/frame in the log.
+
+Opaque portions of Blend surfaces now contribute geometry. Transparent and Blend texture alpha is multiplied by sampled geoset/material opacity and compared with the existing binary cutoff (192/255); faint effects remain excluded. Additive, add-alpha, modulate and team-glow layers remain excluded. Missing or unsupported BLP textures still produce a logged opaque fallback. Object Editor False and per-map exclusions are applied before any of this model handling.
+
+Material parsing covers the classic and Reforged layouts through MDX 1800, including diffuse subtexture selection. This remains a static approximation: bone transforms/scaling, animated texture selection/UVs, camera-dependent geometry and complete HD shader behavior are not simulated. A portrait plane hidden by bone scaling rather than alpha needs further model-specific work. One initial Stand sample cannot reproduce every frame of a time-varying prop.
+
+Format checks used the primary [mdx-m3-viewer geoset-animation reader](https://github.com/flowtsohg/mdx-m3-viewer/blob/master/src/parsers/mdlx/geosetanimation.ts) and [WhiteoutLib's MDX material layout documentation](https://github.com/FernandoS27/WhiteoutLib/blob/master/docs/MDX_FILE_FORMAT_SPECIFICATION.md#77-mtls--materials), cross-checked against locally installed game model bytes.
+
+### Focused retest for HerrDave
+
+1. Record the exact tool build, Warcraft version and asset source. On a small flat saved test map, place one Fruit Stand, one affected wall/tower/tent/stake, and a stock caster control well apart. Include their imported textures and test every variation actually used in his map.
+2. Remove unit gates from the test copy in World Editor; Ctrl+U only hides them in the editor view. Test doodads alone first, then destructibles separately. Use empty Exclusions, explicit Has a Shadow (SD) True, Fast 1x, hard edges, zero minimum-island cleanup, and the same sun direction for both builds. Disable Terrain, IgnoreShadow rectangles and alpha-terrain masking as in the general test above.
+3. Generate fresh copies from the same saved input with versions 1.3.4 and 1.3.5. Compare the tool preview, exported SHD and `--dump-scene` geometry. The Fruit Stand body should remain, its hidden portrait background should disappear, and eligible opaque prop surfaces should return. Keep the session logs, especially model-resolution, visibility, empty-mesh, alpha-texture and caster-span messages.
+4. Confirm the generated copy directly in the game before a World Editor resave. Repeat with explicit False: that type must contribute no geometry. Then restore True and check/uncheck Exclusions to verify removal and restoration independently of the model cache.
+5. If a prop still fails, provide a minimal test map or the single model plus its textures, object rawcode/skin, variation and log. Inspect its Stand versus Portrait visibility and bone transforms before choosing a further fix. The entire production map is unnecessary.
+
+### Automated coverage
+
+Synthetic two-geoset models and BVH ray tests cover hidden Portrait geometry, static hidden geosets, alpha keys restoring visible geometry, Stand selection over Portrait/alternate sequences, no-Stand fallback, global tracks, loop-boundary interpolation, animated material visibility, Blend cutouts and opacity, excluded effect filters, modern diffuse slots, and malformed tracks. Versions 800, 900, 1000, 1100, 1200 and 1800 have material-layout fixtures. Existing inherited/explicit False and per-map exclusion tests continue to run alongside these checks. Reporter-specific in-game confirmation remains outstanding.
