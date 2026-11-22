@@ -1,6 +1,6 @@
 # ShadowMapTool
 
-ShadowMapTool 1.3.4 is a native Warcraft III static-shadow generator for `.w3x` and `.w3m` maps. It implements the pipeline described in [`wc3_shadowmap_tool_analysis.md`](docs/wc3_shadowmap_tool_analysis.md): map parsing, terrain and placed-object geometry reconstruction, accelerated ray casting, SHD preview/export, and guarded map output. Version 1.3.4 fixes inherited Object Editor shadow settings and adds an optional per-map exclusion list for troublesome doodads and destructibles. Exclusions start empty, and Object Editor False settings remain effective. Selectable 1x, 2x, and 4x edge supersampling, smoother terrain reconstruction, natural sun-softened contours, and original version-1 triangulation remain independently selectable.
+ShadowMapTool 1.3.5 is a native Warcraft III static-shadow generator for `.w3x` and `.w3m` maps. It implements the pipeline described in [`wc3_shadowmap_tool_analysis.md`](docs/wc3_shadowmap_tool_analysis.md): map parsing, terrain and placed-object geometry reconstruction, accelerated ray casting, SHD preview/export, and guarded map output. Version 1.3.5 fixes model visibility and material filtering that could produce portrait-background shadows or omit visible prop surfaces. It also corrects diffuse texture selection in modern MDX models. The per-map exclusion list remains available for troublesome doodads and destructibles. Exclusions start empty, and Object Editor False settings remain effective. Selectable 1x, 2x, and 4x edge supersampling, smoother terrain reconstruction, natural sun-softened contours, and original version-1 triangulation remain independently selectable.
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the version history and current compatibility limitations.
 
@@ -47,7 +47,7 @@ Create the curated public Windows package after a successful build and test run:
 .\scripts\build-release.ps1
 ```
 
-This writes `dist/ShadowMapTool-1.3.4-win64.zip` and `dist/SHA256SUMS.txt`. The package contains only the GUI, CLI, runtime CascLib DLL, README, changelog, third-party notices, and doodad-shadow diagnostic guide. Do not publish the whole `build/Release` directory: it also contains the test executable, static development library, and generated session logs.
+This writes `dist/ShadowMapTool-1.3.5-win64.zip` and `dist/SHA256SUMS.txt`. The package contains only the GUI, CLI, runtime CascLib DLL, README, changelog, third-party notices, and doodad-shadow diagnostic guide. Do not publish the whole `build/Release` directory: it also contains the test executable, static development library, and generated session logs.
 
 ## Branches and releases
 
@@ -55,7 +55,7 @@ This writes `dist/ShadowMapTool-1.3.4-win64.zip` and `dist/SHA256SUMS.txt`. The 
 - `main` contains stable public versions.
 - tags named `v*` build, test, and publish a GitHub release automatically.
 
-Normal changes should be committed to `dev`, validated there, and merged into `main`. A release tag such as `v1.3.4` belongs on the corresponding stable `main` commit.
+Normal changes should be committed to `dev`, validated there, and merged into `main`. A release tag such as `v1.3.5` belongs on the corresponding stable `main` commit.
 
 The Visual Studio 2019 CMake distribution uses the C++20 compatibility mode; newer CMake/toolchains select C++23. The implementation currently needs no post-C++20 language feature.
 
@@ -214,7 +214,7 @@ The tool stores working previews top-to-bottom and reverses rows only at the War
 
 ## Current limitations
 
-The generator uses the MDX bind/default pose. It excludes non-shadow visual-effect materials and alpha-tests Transparent layers when their BLP texture resolves, but animated visibility, texture animation, and every replaceable/dynamic texture behavior are not reconstructed. A missing or unsupported alpha texture is reported and safely falls back to opaque geometry. Fully transparent terrain receivers are excluded automatically. Approximate cliff-layer walls are optional and disabled by default; exact decorative cliff-model protrusions and World Editor's undocumented post-processing remain compatibility work that needs isolated in-game reference maps.
+The generator uses MDX bind/default geometry, with geoset and material alpha sampled at the start of Stand (global animations at time zero). Without Stand, it uses static visibility for non-global tracks. It excludes hidden geometry and non-shadow visual-effect materials, and alpha-tests Transparent and Blend surfaces against their BLP texture and sampled opacity at a binary cutoff of 192/255. Modern diffuse subtexture slots are supported through MDX 1800. Bone motion/scaling, texture animation, and every replaceable/dynamic texture behavior are not reconstructed; geometry hidden by animated bone transforms can still need a per-map exclusion. A missing or unsupported alpha texture is reported and safely falls back to opaque geometry. Fully transparent terrain receivers are excluded automatically. Approximate cliff-layer walls are optional and disabled by default; exact decorative cliff-model protrusions and World Editor's undocumented post-processing remain compatibility work that needs isolated in-game reference maps.
 
 The paired 64 x 64 reference maps in `tests/fixtures/reference-maps/` establish that SHD orientation and byte polarity are correct, but also quantify the older version-2 rendering difference: World Editor writes 2,050 shadowed samples while the stored Smooth sub-tile/Fast 1x fixture writes 4,631. Their intersection-over-union is 29.4%. Classic triangles at Fast 1x was somewhat closer on that mixed scene (33.0%). Those fixtures predate material/alpha filtering and should not be treated as current quality benchmarks; further World Editor matching work still needs isolated terrain, cliff, opaque-model, alpha-tested-model, and animated-visibility reference pairs.
 

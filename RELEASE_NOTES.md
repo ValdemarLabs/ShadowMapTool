@@ -1,21 +1,22 @@
-# ShadowMapTool v1.3.4
+# ShadowMapTool v1.3.5
 
-This release fixes inherited Object Editor shadow settings and adds an optional per-map exclusion list for troublesome doodads and destructibles.
+This release fixes model visibility and material filtering that could create shadows from invisible portrait backgrounds or omit visible prop surfaces. Thanks to **HerrDave** for reporting both problems.
 
 ## Highlights
 
-- Fixed objects casting shadows when their inherited **Has shadow** setting is False. Explicit False overrides already worked; stock numeric defaults are now handled correctly too. Thanks to **HerrDave** for finding and reporting the bug.
-- Added **Exclusions**, a searchable list of placed object types with names, IDs, model paths, placement counts, and resolved shadow settings.
-- Nothing is excluded by default. Checking a type excludes all its placements; unchecking it restores normal Object Editor behavior and never forces False objects to cast shadows.
-- Exclusions are saved beside each map, shared by the GUI and CLI, and preserved with generated map copies. Global tuning presets do not change them.
-- Added clearer filtering diagnostics and a reproducible guide for investigating custom-model shadows. Malformed object overrides now stop calculation instead of continuing with incomplete settings.
+- Geoset and material alpha now follow the start of the model's **Stand** sequence. Geometry hidden in Stand but visible in Portrait is excluded, while surfaces animated visible in Stand can cast shadows.
+- Opaque portions of **Blend** materials now cast shadows, with texture and opacity cutouts. Additive, modulate and team-glow effects remain excluded.
+- Modern MDX models now use the actual diffuse texture slot instead of the legacy placeholder. Material animation parsing supports layouts through MDX 1800.
+- Visibility diagnostics report removed geometry and the sampled sequence/frame. Added regression tests cover portrait geometry, missing Blend surfaces, modern texture slots and malformed animation tracks.
 
-## Using exclusions
+Object Editor **Has a Shadow = False** remains effective. Per-map exclusions still start empty and never force disabled objects to cast shadows.
 
-Open a map, select **Exclusions**, check the types to suppress, and select **Apply**. Calculate shadows again before saving. **Cancel** discards pending changes; **Clear exclusions** returns to Object Editor settings.
+## Validation and limits
 
-Keep the `<map filename>.w3shadow-exclusions` file with its map when moving or renaming it. No map object data is changed by the exclusion list.
+The Windows release build and all three test groups passed locally. A reference-map generation against installed Warcraft III assets resolved all 50 placements with no unresolved models.
 
-The Windows download includes the GUI, CLI, CascLib runtime, documentation, and [diagnostic guide](https://github.com/ValdemarLabs/ShadowMapTool/blob/v1.3.4/docs/doodad-shadow-diagnostics.md). See the [changelog](https://github.com/ValdemarLabs/ShadowMapTool/blob/v1.3.4/CHANGELOG.md) for full details.
+HerrDave's actual map and affected models were unavailable, so confirmation of his specific imports remains pending. Visibility is sampled once, and geometry still uses the bind/default pose; animated bone scaling, bone motion and texture animation are not reconstructed. A portrait background hidden through bone transforms may still need a per-map exclusion.
 
-Build, regression, GUI smoke, and GUI/CLI exclusion-persistence checks passed locally. The original reported map/model still requires in-game confirmation. **Save as copy** remains the recommended first run.
+Use **Save as copy** for the first comparison. The [diagnostic guide](https://github.com/ValdemarLabs/ShadowMapTool/blob/v1.3.5/docs/doodad-shadow-diagnostics.md) includes a focused retest procedure that separates doodads, destructibles and unit shadows.
+
+The Windows download includes the GUI, CLI, CascLib runtime, documentation and diagnostic guide. See the [changelog](https://github.com/ValdemarLabs/ShadowMapTool/blob/v1.3.5/CHANGELOG.md) for full details.

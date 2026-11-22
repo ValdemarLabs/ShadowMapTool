@@ -509,7 +509,7 @@ int App::run(
     const bool smokeTest)
 {
     initializeSessionLog();
-    logEvent(StatusKind::Neutral, L"ShadowMap Tool 1.3.4 session started.");
+    logEvent(StatusKind::Neutral, L"ShadowMap Tool 1.3.5 session started.");
     if (!initializeFactories()) {
         logEvent(StatusKind::Error, L"Application startup failed: graphics factories could not be initialized.");
         return 1;
